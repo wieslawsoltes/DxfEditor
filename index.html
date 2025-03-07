@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Minimal OOP Drawing App (MVVM, DXF) with Pan/Zoom</title>
+  <title>Minimal OOP Drawing App (MVVM, DXF) with Pan/Zoom and Block Editing</title>
   <style>
     body {
       font-family: sans-serif;
@@ -30,6 +30,38 @@
       width: 100%;
       height: 120px;
     }
+    /* Modal styles for block editor */
+    #blockEditorOverlay {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: rgba(0,0,0,0.5);
+      z-index: 900;
+    }
+    #blockEditorModal {
+      display: none;
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: #fff;
+      border: 1px solid #ccc;
+      padding: 16px;
+      z-index: 1000;
+      width: 400px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.5);
+    }
+    #blockEditorModal textarea {
+      width: 100%;
+      height: 200px;
+    }
+    #blockEditorModal button {
+      margin-top: 8px;
+      margin-right: 4px;
+    }
   </style>
 </head>
 <body>
@@ -45,6 +77,7 @@
   <button id="polylineTool">Polyline</button>
   <button id="createBlock">Create BLOCK from Selection</button>
   <button id="insertBlock">INSERT Block</button>
+  <button id="editBlock">Edit Block</button>
   <button id="saveDXF">Save DXF</button>
   <input type="file" id="loadDXFFile" accept=".dxf,text/plain" />
 </div>
@@ -57,6 +90,16 @@
   <strong>DXF Output / Debug:</strong><br>
   <textarea id="dxfOutput" readonly></textarea>
 </p>
+
+<!-- Block Editor Modal -->
+<div id="blockEditorOverlay"></div>
+<div id="blockEditorModal">
+  <h3>Edit Block</h3>
+  <textarea id="blockEditorTextarea"></textarea>
+  <br>
+  <button id="saveBlockEdit">Save Block Edit</button>
+  <button id="cancelBlockEdit">Cancel</button>
+</div>
 
 <script>
 /*
@@ -1072,6 +1115,41 @@ function convertDXFEntityToModel(e) {
 
 /*
   ===============================
+  ========== Block Editing ======
+  ===============================
+*/
+
+// We'll allow block editing via a simple JSON editor modal.
+let currentEditingBlockName = null;
+
+function entityToObject(entity) {
+  if (entity instanceof LineEntity) {
+    return { type: "Line", x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
+  } else if (entity instanceof PolylineEntity) {
+    return { type: "Polyline", vertices: entity.vertices, closed: entity.closed };
+  } else if (entity instanceof CircleEntity) {
+    return { type: "Circle", cx: entity.cx, cy: entity.cy, r: entity.r };
+  } else if (entity instanceof TextEntity) {
+    return { type: "Text", x: entity.x, y: entity.y, text: entity.text };
+  }
+  return null;
+}
+
+function objectToEntity(obj) {
+  if (obj.type === "Line") {
+    return new LineEntity(obj.x1, obj.y1, obj.x2, obj.y2);
+  } else if (obj.type === "Polyline") {
+    return new PolylineEntity(obj.vertices, obj.closed);
+  } else if (obj.type === "Circle") {
+    return new CircleEntity(obj.cx, obj.cy, obj.r);
+  } else if (obj.type === "Text") {
+    return new TextEntity(obj.x, obj.y, obj.text);
+  }
+  return null;
+}
+
+/*
+  ===============================
   ========== Main ===============
   ===============================
 */
@@ -1128,6 +1206,48 @@ function convertDXFEntityToModel(e) {
     } else {
       alert("Block not found!");
     }
+  });
+
+  // Block Editing via modal JSON editor
+  document.getElementById('editBlock').addEventListener('click', ()=>{
+    const name = prompt("Block name to edit:", "Block1");
+    if (name && drawing.blocks[name]) {
+      currentEditingBlockName = name;
+      const block = drawing.blocks[name];
+      // Convert block entities to plain objects
+      const objs = block.entities.map(entityToObject);
+      const jsonStr = JSON.stringify(objs, null, 2);
+      document.getElementById('blockEditorTextarea').value = jsonStr;
+      document.getElementById('blockEditorOverlay').style.display = 'block';
+      document.getElementById('blockEditorModal').style.display = 'block';
+    } else {
+      alert("Block not found!");
+    }
+  });
+
+  document.getElementById('saveBlockEdit').addEventListener('click', ()=>{
+    try {
+      const jsonStr = document.getElementById('blockEditorTextarea').value;
+      const objs = JSON.parse(jsonStr);
+      if (!Array.isArray(objs)) {
+        alert("Invalid format: Expected an array of entities.");
+        return;
+      }
+      const newEntities = objs.map(objectToEntity).filter(e => e !== null);
+      drawing.blocks[currentEditingBlockName].entities = newEntities;
+      // Hide modal
+      document.getElementById('blockEditorOverlay').style.display = 'none';
+      document.getElementById('blockEditorModal').style.display = 'none';
+      currentEditingBlockName = null;
+    } catch (e) {
+      alert("Error parsing JSON: " + e.message);
+    }
+  });
+
+  document.getElementById('cancelBlockEdit').addEventListener('click', ()=>{
+    document.getElementById('blockEditorOverlay').style.display = 'none';
+    document.getElementById('blockEditorModal').style.display = 'none';
+    currentEditingBlockName = null;
   });
 
   document.getElementById('saveDXF').addEventListener('click', ()=>{
