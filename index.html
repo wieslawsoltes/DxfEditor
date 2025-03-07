@@ -1,0 +1,1000 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Minimal OOP Drawing App (MVVM, DXF)</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      margin: 16px;
+    }
+    #canvasContainer {
+      border: 1px solid #ccc;
+      width: 800px;
+      height: 600px;
+      position: relative;
+    }
+    #drawingCanvas {
+      position: absolute;
+      top: 0;
+      left: 0;
+    }
+    #toolbar {
+      margin-bottom: 8px;
+    }
+    button {
+      margin-right: 4px;
+    }
+    textarea {
+      width: 100%;
+      height: 120px;
+    }
+  </style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button id="selectTool">Select</button>
+  <button id="lineTool">Line</button>
+  <button id="rectTool">Rectangle</button>
+  <button id="circleTool">Circle</button>
+  <button id="textTool">Text</button>
+  <button id="createBlock">Create BLOCK from Selection</button>
+  <button id="insertBlock">INSERT Block</button>
+  <button id="saveDXF">Save DXF</button>
+  <input type="file" id="loadDXFFile" accept=".dxf,text/plain" />
+</div>
+
+<div id="canvasContainer">
+  <canvas id="drawingCanvas" width="800" height="600"></canvas>
+</div>
+
+<p>
+  <strong>DXF Output / Debug:</strong><br>
+  <textarea id="dxfOutput" readonly></textarea>
+</p>
+
+<script>
+/*
+  ===============================
+  ========== Model ==============
+  ===============================
+*/
+
+class Entity {
+  constructor() {
+    this.selected = false; // For selection highlight
+  }
+  draw(ctx) {}
+  isHit(x, y) { return false; }
+  move(dx, dy) {}
+}
+
+class LineEntity extends Entity {
+  constructor(x1, y1, x2, y2) {
+    super();
+    this.x1 = x1;
+    this.y1 = y1;
+    this.x2 = x2;
+    this.y2 = y2;
+  }
+
+  draw(ctx) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.strokeStyle = this.selected ? 'red' : 'black';
+    ctx.moveTo(this.x1, this.y1);
+    ctx.lineTo(this.x2, this.y2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  isHit(x, y) {
+    // Very simple "hit" detection for a line
+    // We'll treat it as "within a certain distance" from the line
+    const dist = pointLineDistance(x, y, this.x1, this.y1, this.x2, this.y2);
+    return dist < 5;
+  }
+
+  move(dx, dy) {
+    this.x1 += dx;
+    this.y1 += dy;
+    this.x2 += dx;
+    this.y2 += dy;
+  }
+}
+
+class RectangleEntity extends Entity {
+  constructor(x, y, w, h) {
+    super();
+    this.x = x;
+    this.y = y;
+    this.width = w;
+    this.height = h;
+  }
+
+  draw(ctx) {
+    ctx.save();
+    ctx.strokeStyle = this.selected ? 'red' : 'black';
+    ctx.strokeRect(this.x, this.y, this.width, this.height);
+    ctx.restore();
+  }
+
+  isHit(px, py) {
+    return (px >= this.x && px <= this.x + this.width &&
+            py >= this.y && py <= this.y + this.height);
+  }
+
+  move(dx, dy) {
+    this.x += dx;
+    this.y += dy;
+  }
+}
+
+class CircleEntity extends Entity {
+  constructor(cx, cy, r) {
+    super();
+    this.cx = cx;
+    this.cy = cy;
+    this.r = r;
+  }
+
+  draw(ctx) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.strokeStyle = this.selected ? 'red' : 'black';
+    ctx.arc(this.cx, this.cy, this.r, 0, 2*Math.PI);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  isHit(x, y) {
+    const dx = this.cx - x;
+    const dy = this.cy - y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    return dist <= this.r + 5; // tolerance
+  }
+
+  move(dx, dy) {
+    this.cx += dx;
+    this.cy += dy;
+  }
+}
+
+class TextEntity extends Entity {
+  constructor(x, y, text) {
+    super();
+    this.x = x;
+    this.y = y;
+    this.text = text || "Text";
+  }
+
+  draw(ctx) {
+    ctx.save();
+    ctx.font = "16px sans-serif";
+    ctx.fillStyle = 'black';
+    if (this.selected) {
+      ctx.strokeStyle = 'red';
+      // Draw an outline or bounding box if you want
+      // For simplicity, let's just underline it
+      ctx.beginPath();
+      ctx.moveTo(this.x, this.y);
+      ctx.lineTo(this.x + ctx.measureText(this.text).width, this.y);
+      ctx.stroke();
+    }
+    ctx.fillText(this.text, this.x, this.y);
+    ctx.restore();
+  }
+
+  isHit(px, py) {
+    // Rough bounding box hit test for text
+    // Assume 16px height and measure text width
+    let width = 50; // fallback
+    const tempCanvas = document.createElement('canvas').getContext('2d');
+    tempCanvas.font = "16px sans-serif";
+    width = tempCanvas.measureText(this.text).width;
+
+    const height = 16;
+    return (px >= this.x && px <= this.x + width &&
+            py <= this.y && py >= this.y - height);
+  }
+
+  move(dx, dy) {
+    this.x += dx;
+    this.y += dy;
+  }
+}
+
+/**
+ * A block is essentially a named definition containing a list of entities.
+ * We store them in their local coordinates.
+ */
+class Block {
+  constructor(name, entities = []) {
+    this.name = name;
+    // Make a copy of entities in block definition
+    this.entities = entities.map(e => cloneEntity(e));
+  }
+}
+
+/**
+ * INSERT references a Block by name, with a position (and optional scale/rotation).
+ */
+class InsertEntity extends Entity {
+  constructor(blockName, x, y) {
+    super();
+    this.blockName = blockName;
+    this.x = x;
+    this.y = y;
+    // For simplicity, no scale/rotation in this demo
+  }
+
+  draw(ctx, blocks) {
+    const block = blocks[this.blockName];
+    if (!block) return;
+
+    ctx.save();
+    // translate to (this.x, this.y)
+    ctx.translate(this.x, this.y);
+
+    // Draw each entity in the block
+    for (let e of block.entities) {
+      ctx.save();
+      e.draw(ctx);
+      ctx.restore();
+    }
+
+    ctx.restore();
+
+    // Draw bounding or marker if selected
+    if (this.selected) {
+      ctx.save();
+      ctx.strokeStyle = 'red';
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, 5, 0, 2*Math.PI);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // For simplicity, let's do a naive "hit test" near insertion base point
+  isHit(px, py) {
+    const dx = px - this.x;
+    const dy = py - this.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    return dist < 10;
+  }
+
+  move(dx, dy) {
+    this.x += dx;
+    this.y += dy;
+  }
+}
+
+/**
+ * The main Drawing model that contains:
+ * - A list of top-level entities (lines, circles, text, inserts, etc.)
+ * - A dictionary of block definitions
+ */
+class Drawing {
+  constructor() {
+    this.entities = [];
+    this.blocks = {}; // { blockName: Block, ... }
+  }
+}
+
+/*
+  ===============================
+  ========== Utilities ==========
+  ===============================
+*/
+
+// Basic function to clone an entity (for Block definitions)
+function cloneEntity(entity) {
+  if (entity instanceof LineEntity) {
+    return new LineEntity(entity.x1, entity.y1, entity.x2, entity.y2);
+  } else if (entity instanceof RectangleEntity) {
+    return new RectangleEntity(entity.x, entity.y, entity.width, entity.height);
+  } else if (entity instanceof CircleEntity) {
+    return new CircleEntity(entity.cx, entity.cy, entity.r);
+  } else if (entity instanceof TextEntity) {
+    return new TextEntity(entity.x, entity.y, entity.text);
+  } else if (entity instanceof InsertEntity) {
+    return new InsertEntity(entity.blockName, entity.x, entity.y);
+  }
+  return null;
+}
+
+// Distance from point to line segment
+function pointLineDistance(px, py, x1, y1, x2, y2) {
+  // Source: formula for segment distance
+  const A = px - x1;
+  const B = py - y1;
+  const C = x2 - x1;
+  const D = y2 - y1;
+
+  const dot = A * C + B * D;
+  const len_sq = C * C + D * D;
+  let param = -1;
+  if (len_sq !== 0) param = dot / len_sq;
+
+  let xx, yy;
+  if (param < 0) {
+    xx = x1; yy = y1;
+  } else if (param > 1) {
+    xx = x2; yy = y2;
+  } else {
+    xx = x1 + param * C;
+    yy = y1 + param * D;
+  }
+
+  const dx = px - xx;
+  const dy = py - yy;
+  return Math.sqrt(dx * dx + dy * dy);
+}
+
+/*
+  ===============================
+  ========== ViewModel ==========
+  ===============================
+*/
+
+class DrawingViewModel {
+  constructor(drawing) {
+    this.drawing = drawing;
+    this.currentTool = 'select';
+
+    // For interactive creation
+    this.tempEntity = null;
+    this.startX = 0;
+    this.startY = 0;
+
+    // For inserting block
+    this.blockToInsert = null;
+  }
+
+  setTool(toolName) {
+    this.currentTool = toolName;
+    this.tempEntity = null;
+    this.blockToInsert = null;
+  }
+
+  mouseDown(x, y, shiftKey) {
+    if (this.currentTool === 'select') {
+      // Check if we hit an entity
+      const hit = this.findHitEntity(x, y);
+      if (hit) {
+        // If shift is pressed, toggle selection
+        if (shiftKey) {
+          hit.selected = !hit.selected;
+        } else {
+          // Clear other selections
+          this.clearSelection();
+          hit.selected = true;
+        }
+      } else {
+        // No hit, clear selection if not shift
+        if (!shiftKey) {
+          this.clearSelection();
+        }
+      }
+      this.startX = x;
+      this.startY = y;
+    } else if (this.currentTool === 'line') {
+      this.tempEntity = new LineEntity(x, y, x, y);
+      this.drawing.entities.push(this.tempEntity);
+      this.startX = x;
+      this.startY = y;
+    } else if (this.currentTool === 'rect') {
+      this.tempEntity = new RectangleEntity(x, y, 0, 0);
+      this.drawing.entities.push(this.tempEntity);
+      this.startX = x;
+      this.startY = y;
+    } else if (this.currentTool === 'circle') {
+      this.tempEntity = new CircleEntity(x, y, 0);
+      this.drawing.entities.push(this.tempEntity);
+      this.startX = x;
+      this.startY = y;
+    } else if (this.currentTool === 'text') {
+      const text = prompt("Enter text:", "Hello");
+      if (text !== null) {
+        this.tempEntity = new TextEntity(x, y, text);
+        this.drawing.entities.push(this.tempEntity);
+      }
+      this.tempEntity = null; // done
+    } else if (this.currentTool === 'insertBlock') {
+      if (this.blockToInsert) {
+        const insertEnt = new InsertEntity(this.blockToInsert, x, y);
+        this.drawing.entities.push(insertEnt);
+      }
+    }
+  }
+
+  mouseMove(x, y) {
+    if (this.currentTool === 'line' && this.tempEntity) {
+      this.tempEntity.x2 = x;
+      this.tempEntity.y2 = y;
+    } else if (this.currentTool === 'rect' && this.tempEntity) {
+      this.tempEntity.width = x - this.tempEntity.x;
+      this.tempEntity.height = y - this.tempEntity.y;
+    } else if (this.currentTool === 'circle' && this.tempEntity) {
+      const dx = x - this.tempEntity.cx;
+      const dy = y - this.tempEntity.cy;
+      this.tempEntity.r = Math.sqrt(dx*dx + dy*dy);
+    } else if (this.currentTool === 'select') {
+      // If something is selected, let's see if we are dragging
+      // We'll do a simple approach: if mouse is down and there's selected entity
+      // we move them all by dx,dy
+      // This requires storing old positions or approach. We'll do quick approach:
+      // We check if we moved more than some small threshold
+    }
+  }
+
+  mouseUp(x, y) {
+    this.tempEntity = null;
+  }
+
+  findHitEntity(x, y) {
+    // Check from top to bottom
+    for (let i = this.drawing.entities.length - 1; i >= 0; i--) {
+      const ent = this.drawing.entities[i];
+      if (ent instanceof InsertEntity) {
+        // separate draw logic with blocks
+        // But the isHit is still the same approach (base point)
+        if (ent.isHit(x, y)) return ent;
+      } else {
+        if (ent.isHit(x, y)) return ent;
+      }
+    }
+    return null;
+  }
+
+  clearSelection() {
+    this.drawing.entities.forEach(e => e.selected = false);
+  }
+
+  moveSelection(dx, dy) {
+    // Move all selected
+    for (let ent of this.drawing.entities) {
+      if (ent.selected) {
+        ent.move(dx, dy);
+      }
+    }
+  }
+
+  offsetEntity(entity, dx, dy) {
+    if (entity instanceof LineEntity) {
+      return new LineEntity(entity.x1 - dx, entity.y1 - dy, entity.x2 - dx, entity.y2 - dy);
+    } else if (entity instanceof RectangleEntity) {
+      return new RectangleEntity(entity.x - dx, entity.y - dy, entity.width, entity.height);
+    } else if (entity instanceof CircleEntity) {
+      return new CircleEntity(entity.cx - dx, entity.cy - dy, entity.r);
+    } else if (entity instanceof TextEntity) {
+      return new TextEntity(entity.x - dx, entity.y - dy, entity.text);
+    }
+    return null;
+  }
+
+  createBlockFromSelection(blockName) {
+    // Gather selected entities
+    const selectedEntities = this.drawing.entities.filter(e => e.selected);
+    if (selectedEntities.length === 0) return;
+
+    // Compute minimum x and y from selected entities
+    let minX = Infinity, minY = Infinity;
+    selectedEntities.forEach(e => {
+      if (e instanceof LineEntity) {
+        minX = Math.min(minX, e.x1, e.x2);
+        minY = Math.min(minY, e.y1, e.y2);
+      } else if (e instanceof RectangleEntity) {
+        minX = Math.min(minX, e.x);
+        minY = Math.min(minY, e.y);
+      } else if (e instanceof CircleEntity) {
+        // using circle's center
+        minX = Math.min(minX, e.cx);
+        minY = Math.min(minY, e.cy);
+      } else if (e instanceof TextEntity) {
+        minX = Math.min(minX, e.x);
+        minY = Math.min(minY, e.y);
+      }
+    });
+
+    // Offset each entity so that the block's origin becomes (0,0)
+    const offsetEntities = selectedEntities.map(e => this.offsetEntity(e, minX, minY))
+                                            .filter(e => e !== null);
+
+    // Create the block with normalized (0,0) origin
+    this.drawing.blocks[blockName] = new Block(blockName, offsetEntities);
+
+    // Optionally, remove or deselect the original entities
+    selectedEntities.forEach(ent => { ent.selected = false; });
+  }
+
+  setBlockToInsert(blockName) {
+    this.currentTool = 'insertBlock';
+    this.blockToInsert = blockName;
+  }
+}
+
+/*
+  ===============================
+  ========== View ===============
+  ===============================
+*/
+
+class CanvasRenderer {
+  constructor(canvas, drawing, viewModel) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.drawing = drawing;
+    this.viewModel = viewModel;
+
+    this.isMouseDown = false;
+    this.lastX = 0;
+    this.lastY = 0;
+
+    // Setup event listeners
+    this.canvas.addEventListener('mousedown', (evt) => this.onMouseDown(evt));
+    this.canvas.addEventListener('mousemove', (evt) => this.onMouseMove(evt));
+    this.canvas.addEventListener('mouseup', (evt) => this.onMouseUp(evt));
+
+    // Render loop
+    requestAnimationFrame(() => this.renderLoop());
+  }
+
+  getMousePos(evt) {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: evt.clientX - rect.left,
+      y: evt.clientY - rect.top
+    };
+  }
+
+  onMouseDown(evt) {
+    this.isMouseDown = true;
+    const pos = this.getMousePos(evt);
+    this.lastX = pos.x;
+    this.lastY = pos.y;
+    this.viewModel.mouseDown(pos.x, pos.y, evt.shiftKey);
+  }
+
+  onMouseMove(evt) {
+    const pos = this.getMousePos(evt);
+    if (this.isMouseDown && this.viewModel.currentTool === 'select') {
+      // We are dragging selected entities
+      const dx = pos.x - this.lastX;
+      const dy = pos.y - this.lastY;
+      this.viewModel.moveSelection(dx, dy);
+      this.lastX = pos.x;
+      this.lastY = pos.y;
+    }
+    this.viewModel.mouseMove(pos.x, pos.y);
+  }
+
+  onMouseUp(evt) {
+    this.isMouseDown = false;
+    const pos = this.getMousePos(evt);
+    this.viewModel.mouseUp(pos.x, pos.y);
+  }
+
+  renderLoop() {
+    this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    // Draw all entities
+    for (let ent of this.drawing.entities) {
+      if (ent instanceof InsertEntity) {
+        // special draw to pass block dictionary
+        ent.draw(this.ctx, this.drawing.blocks);
+      } else {
+        ent.draw(this.ctx);
+      }
+    }
+    requestAnimationFrame(() => this.renderLoop());
+  }
+}
+
+/*
+  ===============================
+  ======== DXF I/O ==============
+  ===============================
+*/
+
+/**
+ * Minimal DXF Exporter. Exports:
+ * - LINE
+ * - CIRCLE
+ * - TEXT
+ * - BLOCKS with contained geometry
+ * - INSERT
+ * Skips unselected or selected, we just export everything. Adjust as needed.
+ *
+ * NOTE: Real DXF has many more group codes; here we just illustrate the concept.
+ */
+function exportDXF(drawing) {
+  let dxf = [];
+  dxf.push("0");
+  dxf.push("SECTION");
+  dxf.push("2");
+  dxf.push("HEADER");
+  dxf.push("9");
+  dxf.push("$ACADVER");
+  dxf.push("1");
+  dxf.push("AC1009"); // (DXF R12)
+  dxf.push("0");
+  dxf.push("ENDSEC");
+
+  // BLOCKS section
+  dxf.push("0");
+  dxf.push("SECTION");
+  dxf.push("2");
+  dxf.push("BLOCKS");
+  for (let blockName in drawing.blocks) {
+    const block = drawing.blocks[blockName];
+    // Correct Block header with base point definition
+    dxf.push("0");
+    dxf.push("BLOCK");
+    dxf.push("2");
+    dxf.push(blockName);
+    dxf.push("70");
+    dxf.push("0");
+    dxf.push("10");
+    dxf.push("0");
+    dxf.push("20");
+    dxf.push("0");
+    // Entities in block
+    for (let e of block.entities) {
+      dxf.push(...entityToDXF(e));
+    }
+    dxf.push("0");
+    dxf.push("ENDBLK");
+  }
+  dxf.push("0");
+  dxf.push("ENDSEC");
+
+
+  // ENTITIES section
+  dxf.push("0");
+  dxf.push("SECTION");
+  dxf.push("2");
+  dxf.push("ENTITIES");
+  for (let e of drawing.entities) {
+    dxf.push(...entityToDXF(e));
+  }
+  dxf.push("0");
+  dxf.push("ENDSEC");
+  dxf.push("0");
+  dxf.push("EOF");
+
+  return dxf.join("\n");
+}
+
+function entityToDXF(ent) {
+  let result = [];
+  if (ent instanceof LineEntity) {
+    result.push("0");
+    result.push("LINE");
+    result.push("8");
+    result.push("0");  // layer name
+    result.push("10");
+    result.push(ent.x1);
+    result.push("20");
+    result.push(ent.y1);
+    result.push("11");
+    result.push(ent.x2);
+    result.push("21");
+    result.push(ent.y2);
+  } else if (ent instanceof CircleEntity) {
+    result.push("0");
+    result.push("CIRCLE");
+    result.push("8");
+    result.push("0");
+    result.push("10");
+    result.push(ent.cx);
+    result.push("20");
+    result.push(ent.cy);
+    result.push("40");
+    result.push(ent.r);
+  } else if (ent instanceof RectangleEntity) {
+    // We'll just export as a polyline or 4 lines. 
+    // For brevity, let's do 4 lines:
+    const x1 = ent.x, y1 = ent.y;
+    const x2 = ent.x + ent.width, y2 = ent.y;
+    const x3 = ent.x + ent.width, y3 = ent.y + ent.height;
+    const x4 = ent.x, y4 = ent.y + ent.height;
+    // top
+    result.push(...entityToDXF(new LineEntity(x1,y1,x2,y2)));
+    // right
+    result.push(...entityToDXF(new LineEntity(x2,y2,x3,y3)));
+    // bottom
+    result.push(...entityToDXF(new LineEntity(x3,y3,x4,y4)));
+    // left
+    result.push(...entityToDXF(new LineEntity(x4,y4,x1,y1)));
+  } else if (ent instanceof TextEntity) {
+    result.push("0");
+    result.push("TEXT");
+    result.push("8");
+    result.push("0");
+    result.push("10");
+    result.push(ent.x);
+    result.push("20");
+    result.push(ent.y);
+    result.push("1");
+    result.push(ent.text);
+    result.push("40");
+    result.push("16"); // text height
+  } else if (ent instanceof InsertEntity) {
+    result.push("0");
+    result.push("INSERT");
+    result.push("8");
+    result.push("0");
+    result.push("2");
+    result.push(ent.blockName);
+    result.push("10");
+    result.push(ent.x);
+    result.push("20");
+    result.push(ent.y);
+  }
+  return result;
+}
+
+function importDXF(dxfString, drawing) {
+  // Reset the drawing
+  drawing.entities = [];
+  drawing.blocks = {};
+
+  // Split the DXF file into non-empty trimmed lines and then into pairs
+  const lines = dxfString.split(/\r?\n/).map(l => l.trim()).filter(l => l !== "");
+  const pairs = [];
+  for (let i = 0; i < lines.length; i += 2) {
+    const code = lines[i];
+    const value = lines[i + 1] || "";
+    pairs.push({ code, value });
+  }
+
+  let index = 0;
+  function nextPair() {
+    return pairs[index++] || { code: null, value: null };
+  }
+  function peekPair() {
+    return pairs[index] || { code: null, value: null };
+  }
+  // Skip until the next entity start (i.e. a group code "0")
+  function skipToNextEntity() {
+    while (index < pairs.length && peekPair().code !== "0") {
+      index++;
+    }
+  }
+  // Skip a section by advancing until the ENDSEC or EOF marker is found and consumed
+  function skipSection() {
+    while (index < pairs.length) {
+      let p = peekPair();
+      if (p.code === "0" && (p.value === "ENDSEC" || p.value === "EOF")) {
+        nextPair(); // consume the ENDSEC/EOF marker
+        break;
+      }
+      index++;
+    }
+  }
+
+  function parseEntitiesInto(arrayRef) {
+    while (index < pairs.length) {
+      let pair = peekPair();
+      if (pair.code === "0") {
+        if (pair.value === "ENDSEC" || pair.value === "EOF") break;
+        if (["LINE", "CIRCLE", "TEXT", "INSERT"].includes(pair.value)) {
+          const entityData = parseOneEntity();
+          const e = convertDXFEntityToModel(entityData);
+          if (e) arrayRef.push(e);
+        } else {
+          // Unknown entity – skip this entity's group codes
+          nextPair(); // skip the "0",<unknown type>
+          skipToNextEntity();
+        }
+      } else {
+        nextPair();
+      }
+    }
+  }
+
+  function parseBlocks() {
+    while (index < pairs.length) {
+      let pair = peekPair();
+      if (pair.code === "0") {
+        if (pair.value === "ENDSEC" || pair.value === "EOF") break;
+        if (pair.value === "BLOCK") {
+          parseOneBlock();
+        } else {
+          nextPair();
+        }
+      } else {
+        nextPair();
+      }
+    }
+  }
+
+  function parseOneBlock() {
+    nextPair(); // consume "0","BLOCK"
+    let blockName = "UnnamedBlock";
+    const blockEntities = [];
+    while (index < pairs.length) {
+      let p = peekPair();
+      if (p.code === "0") {
+        if (p.value === "ENDBLK" || p.value === "EOF") {
+          nextPair(); // consume ENDBLK
+          break;
+        }
+        if (["LINE", "CIRCLE", "TEXT", "INSERT"].includes(p.value)) {
+          const entityData = parseOneEntity();
+          blockEntities.push(entityData);
+        } else {
+          nextPair();
+          skipToNextEntity();
+        }
+      } else {
+        let current = nextPair();
+        if (current.code === "2") {
+          blockName = current.value;
+        }
+      }
+    }
+    // Convert collected block entities into real Entity instances and store them
+    const realEntities = blockEntities
+      .map(e => convertDXFEntityToModel(e))
+      .filter(e => e !== null);
+    drawing.blocks[blockName] = new Block(blockName, realEntities);
+  }
+
+  function parseOneEntity() {
+    let first = nextPair(); // e.g. 0,LINE (entity type)
+    let type = first.value;
+    const data = { type };
+    // Continue reading pairs until the next "0" code signals a new entity or section
+    while (index < pairs.length) {
+      let p = peekPair();
+      if (p.code === "0") break;
+      p = nextPair();
+      const gc = p.code;
+      const gv = p.value;
+      switch (type) {
+        case "LINE":
+          if (gc === "10") data.x1 = parseFloat(gv);
+          else if (gc === "20") data.y1 = parseFloat(gv);
+          else if (gc === "11") data.x2 = parseFloat(gv);
+          else if (gc === "21") data.y2 = parseFloat(gv);
+          break;
+        case "CIRCLE":
+          if (gc === "10") data.cx = parseFloat(gv);
+          else if (gc === "20") data.cy = parseFloat(gv);
+          else if (gc === "40") data.r = parseFloat(gv);
+          break;
+        case "TEXT":
+          if (gc === "10") data.x = parseFloat(gv);
+          else if (gc === "20") data.y = parseFloat(gv);
+          else if (gc === "1") data.text = gv;
+          break;
+        case "INSERT":
+          if (gc === "2") data.blockName = gv;
+          else if (gc === "10") data.x = parseFloat(gv);
+          else if (gc === "20") data.y = parseFloat(gv);
+          break;
+      }
+    }
+    return data;
+  }
+
+  // Main parsing loop: look for sections and dispatch accordingly
+  while (index < pairs.length) {
+    let pair = nextPair();
+    if (pair.code === "0" && pair.value === "SECTION") {
+      let secPair = nextPair();
+      if (secPair.code === "2") {
+        let sectionName = secPair.value.toUpperCase();
+        if (sectionName === "HEADER") {
+          skipSection();
+        } else if (sectionName === "BLOCKS") {
+          parseBlocks();
+          skipSection();
+        } else if (sectionName === "ENTITIES") {
+          parseEntitiesInto(drawing.entities);
+          skipSection();
+        } else {
+          skipSection();
+        }
+      }
+    } else if (pair.code === "0" && pair.value === "EOF") {
+      break;
+    }
+  }
+}
+
+
+/**
+ * Convert the parsed lightweight object to a real Entity instance.
+ */
+function convertDXFEntityToModel(e) {
+  if (e.type === 'LINE') {
+    return new LineEntity(e.x1||0, e.y1||0, e.x2||0, e.y2||0);
+  } else if (e.type === 'CIRCLE') {
+    return new CircleEntity(e.cx||0, e.cy||0, e.r||0);
+  } else if (e.type === 'TEXT') {
+    return new TextEntity(e.x||0, e.y||0, e.text||"");
+  } else if (e.type === 'INSERT') {
+    return new InsertEntity(e.blockName||"?", e.x||0, e.y||0);
+  }
+  return null; // or skip
+}
+
+
+/*
+  ===============================
+  ========== Main ===============
+  ===============================
+*/
+
+(function(){
+  const drawing = new Drawing();
+  const viewModel = new DrawingViewModel(drawing);
+
+  const canvas = document.getElementById('drawingCanvas');
+  const renderer = new CanvasRenderer(canvas, drawing, viewModel);
+
+  document.getElementById('selectTool').addEventListener('click', ()=>{
+    viewModel.setTool('select');
+  });
+  document.getElementById('lineTool').addEventListener('click', ()=>{
+    viewModel.setTool('line');
+  });
+  document.getElementById('rectTool').addEventListener('click', ()=>{
+    viewModel.setTool('rect');
+  });
+  document.getElementById('circleTool').addEventListener('click', ()=>{
+    viewModel.setTool('circle');
+  });
+  document.getElementById('textTool').addEventListener('click', ()=>{
+    viewModel.setTool('text');
+  });
+
+  document.getElementById('createBlock').addEventListener('click', ()=>{
+    const name = prompt("Block name:", "Block1");
+    if (name) {
+      viewModel.createBlockFromSelection(name);
+    }
+  });
+
+  document.getElementById('insertBlock').addEventListener('click', ()=>{
+    const name = prompt("Block name to insert:", "Block1");
+    if (name && drawing.blocks[name]) {
+      viewModel.setBlockToInsert(name);
+    } else {
+      alert("Block not found!");
+    }
+  });
+
+  document.getElementById('saveDXF').addEventListener('click', ()=>{
+    const dxfStr = exportDXF(drawing);
+    document.getElementById('dxfOutput').value = dxfStr;
+    // Optionally download
+    const blob = new Blob([dxfStr], {type: 'text/plain'});
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'drawing.dxf';
+    link.click();
+    URL.revokeObjectURL(url);
+  });
+
+  document.getElementById('loadDXFFile').addEventListener('change', (evt)=>{
+    const file = evt.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = function(e) {
+      const contents = e.target.result;
+      importDXF(contents, drawing);
+    };
+    reader.readAsText(file);
+  });
+
+})();
+</script>
+
+</body>
+</html>
