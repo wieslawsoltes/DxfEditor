@@ -90,8 +90,6 @@ class LineEntity extends Entity {
   }
 
   isHit(x, y) {
-    // Very simple "hit" detection for a line
-    // We'll treat it as "within a certain distance" from the line
     const dist = pointLineDistance(x, y, this.x1, this.y1, this.x2, this.y2);
     return dist < 5;
   }
@@ -152,7 +150,7 @@ class CircleEntity extends Entity {
     const dx = this.cx - x;
     const dy = this.cy - y;
     const dist = Math.sqrt(dx*dx + dy*dy);
-    return dist <= this.r + 5; // tolerance
+    return dist <= this.r + 5;
   }
 
   move(dx, dy) {
@@ -175,8 +173,6 @@ class TextEntity extends Entity {
     ctx.fillStyle = 'black';
     if (this.selected) {
       ctx.strokeStyle = 'red';
-      // Draw an outline or bounding box if you want
-      // For simplicity, let's just underline it
       ctx.beginPath();
       ctx.moveTo(this.x, this.y);
       ctx.lineTo(this.x + ctx.measureText(this.text).width, this.y);
@@ -187,13 +183,10 @@ class TextEntity extends Entity {
   }
 
   isHit(px, py) {
-    // Rough bounding box hit test for text
-    // Assume 16px height and measure text width
-    let width = 50; // fallback
+    let width = 50; // fallback width
     const tempCanvas = document.createElement('canvas').getContext('2d');
     tempCanvas.font = "16px sans-serif";
     width = tempCanvas.measureText(this.text).width;
-
     const height = 16;
     return (px >= this.x && px <= this.x + width &&
             py <= this.y && py >= this.y - height);
@@ -226,27 +219,23 @@ class InsertEntity extends Entity {
     this.blockName = blockName;
     this.x = x;
     this.y = y;
-    // For simplicity, no scale/rotation in this demo
   }
 
+  // The draw method accepts the block definitions to render the inserted block.
   draw(ctx, blocks) {
     const block = blocks[this.blockName];
     if (!block) return;
 
     ctx.save();
-    // translate to (this.x, this.y)
     ctx.translate(this.x, this.y);
-
-    // Draw each entity in the block
     for (let e of block.entities) {
       ctx.save();
       e.draw(ctx);
       ctx.restore();
     }
-
     ctx.restore();
 
-    // Draw bounding or marker if selected
+    // If selected, mark the base point
     if (this.selected) {
       ctx.save();
       ctx.strokeStyle = 'red';
@@ -257,12 +246,11 @@ class InsertEntity extends Entity {
     }
   }
 
-  // For simplicity, let's do a naive "hit test" near insertion base point
+  // Fallback hit test (used if no block geometry available)
   isHit(px, py) {
     const dx = px - this.x;
     const dy = py - this.y;
-    const dist = Math.sqrt(dx*dx + dy*dy);
-    return dist < 10;
+    return Math.sqrt(dx*dx + dy*dy) < 10;
   }
 
   move(dx, dy) {
@@ -307,17 +295,14 @@ function cloneEntity(entity) {
 
 // Distance from point to line segment
 function pointLineDistance(px, py, x1, y1, x2, y2) {
-  // Source: formula for segment distance
   const A = px - x1;
   const B = py - y1;
   const C = x2 - x1;
   const D = y2 - y1;
-
   const dot = A * C + B * D;
   const len_sq = C * C + D * D;
   let param = -1;
   if (len_sq !== 0) param = dot / len_sq;
-
   let xx, yy;
   if (param < 0) {
     xx = x1; yy = y1;
@@ -327,7 +312,6 @@ function pointLineDistance(px, py, x1, y1, x2, y2) {
     xx = x1 + param * C;
     yy = y1 + param * D;
   }
-
   const dx = px - xx;
   const dy = py - yy;
   return Math.sqrt(dx * dx + dy * dy);
@@ -343,13 +327,9 @@ class DrawingViewModel {
   constructor(drawing) {
     this.drawing = drawing;
     this.currentTool = 'select';
-
-    // For interactive creation
     this.tempEntity = null;
     this.startX = 0;
     this.startY = 0;
-
-    // For inserting block
     this.blockToInsert = null;
   }
 
@@ -361,19 +341,15 @@ class DrawingViewModel {
 
   mouseDown(x, y, shiftKey) {
     if (this.currentTool === 'select') {
-      // Check if we hit an entity
       const hit = this.findHitEntity(x, y);
       if (hit) {
-        // If shift is pressed, toggle selection
         if (shiftKey) {
           hit.selected = !hit.selected;
         } else {
-          // Clear other selections
           this.clearSelection();
           hit.selected = true;
         }
       } else {
-        // No hit, clear selection if not shift
         if (!shiftKey) {
           this.clearSelection();
         }
@@ -401,7 +377,7 @@ class DrawingViewModel {
         this.tempEntity = new TextEntity(x, y, text);
         this.drawing.entities.push(this.tempEntity);
       }
-      this.tempEntity = null; // done
+      this.tempEntity = null;
     } else if (this.currentTool === 'insertBlock') {
       if (this.blockToInsert) {
         const insertEnt = new InsertEntity(this.blockToInsert, x, y);
@@ -422,11 +398,8 @@ class DrawingViewModel {
       const dy = y - this.tempEntity.cy;
       this.tempEntity.r = Math.sqrt(dx*dx + dy*dy);
     } else if (this.currentTool === 'select') {
-      // If something is selected, let's see if we are dragging
-      // We'll do a simple approach: if mouse is down and there's selected entity
-      // we move them all by dx,dy
-      // This requires storing old positions or approach. We'll do quick approach:
-      // We check if we moved more than some small threshold
+      // For dragging selected entities
+      // This is handled in the renderer's mousemove
     }
   }
 
@@ -434,14 +407,12 @@ class DrawingViewModel {
     this.tempEntity = null;
   }
 
+  // Updated findHitEntity now distinguishes INSERT entities with a custom hit test.
   findHitEntity(x, y) {
-    // Check from top to bottom
     for (let i = this.drawing.entities.length - 1; i >= 0; i--) {
       const ent = this.drawing.entities[i];
       if (ent instanceof InsertEntity) {
-        // separate draw logic with blocks
-        // But the isHit is still the same approach (base point)
-        if (ent.isHit(x, y)) return ent;
+        if (this.hitTestInsert(ent, x, y)) return ent;
       } else {
         if (ent.isHit(x, y)) return ent;
       }
@@ -454,7 +425,6 @@ class DrawingViewModel {
   }
 
   moveSelection(dx, dy) {
-    // Move all selected
     for (let ent of this.drawing.entities) {
       if (ent.selected) {
         ent.move(dx, dy);
@@ -476,11 +446,8 @@ class DrawingViewModel {
   }
 
   createBlockFromSelection(blockName) {
-    // Gather selected entities
     const selectedEntities = this.drawing.entities.filter(e => e.selected);
     if (selectedEntities.length === 0) return;
-
-    // Compute minimum x and y from selected entities
     let minX = Infinity, minY = Infinity;
     selectedEntities.forEach(e => {
       if (e instanceof LineEntity) {
@@ -490,7 +457,6 @@ class DrawingViewModel {
         minX = Math.min(minX, e.x);
         minY = Math.min(minY, e.y);
       } else if (e instanceof CircleEntity) {
-        // using circle's center
         minX = Math.min(minX, e.cx);
         minY = Math.min(minY, e.cy);
       } else if (e instanceof TextEntity) {
@@ -498,21 +464,80 @@ class DrawingViewModel {
         minY = Math.min(minY, e.y);
       }
     });
-
-    // Offset each entity so that the block's origin becomes (0,0)
     const offsetEntities = selectedEntities.map(e => this.offsetEntity(e, minX, minY))
                                             .filter(e => e !== null);
-
-    // Create the block with normalized (0,0) origin
     this.drawing.blocks[blockName] = new Block(blockName, offsetEntities);
-
-    // Optionally, remove or deselect the original entities
     selectedEntities.forEach(ent => { ent.selected = false; });
   }
 
   setBlockToInsert(blockName) {
     this.currentTool = 'insertBlock';
     this.blockToInsert = blockName;
+  }
+
+  // Helper: compute bounding box for a given entity in its local coordinates.
+  getEntityBounds(e) {
+    if (e instanceof LineEntity) {
+      return {
+        minX: Math.min(e.x1, e.x2),
+        minY: Math.min(e.y1, e.y2),
+        maxX: Math.max(e.x1, e.x2),
+        maxY: Math.max(e.y1, e.y2)
+      };
+    } else if (e instanceof RectangleEntity) {
+      return {
+        minX: e.x,
+        minY: e.y,
+        maxX: e.x + e.width,
+        maxY: e.y + e.height
+      };
+    } else if (e instanceof CircleEntity) {
+      return {
+        minX: e.cx - e.r,
+        minY: e.cy - e.r,
+        maxX: e.cx + e.r,
+        maxY: e.cy + e.r
+      };
+    } else if (e instanceof TextEntity) {
+      // Approximate dimensions: 50px wide and 16px tall.
+      return {
+        minX: e.x,
+        minY: e.y - 16,
+        maxX: e.x + 50,
+        maxY: e.y
+      };
+    } else if (e instanceof InsertEntity) {
+      return {
+        minX: e.x,
+        minY: e.y,
+        maxX: e.x,
+        maxY: e.y
+      };
+    }
+    return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
+  }
+
+  // New helper: enhanced hit test for INSERT entities that uses the block's bounding box.
+  hitTestInsert(insertEntity, x, y) {
+    const block = this.drawing.blocks[insertEntity.blockName];
+    if (block && block.entities.length > 0) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      block.entities.forEach(e => {
+          const b = this.getEntityBounds(e);
+          minX = Math.min(minX, b.minX);
+          minY = Math.min(minY, b.minY);
+          maxX = Math.max(maxX, b.maxX);
+          maxY = Math.max(maxY, b.maxY);
+      });
+      // Translate block bounds into world coordinates.
+      minX += insertEntity.x;
+      minY += insertEntity.y;
+      maxX += insertEntity.x;
+      maxY += insertEntity.y;
+      if (x >= minX && x <= maxX && y >= minY && y <= maxY) return true;
+    }
+    // Fallback to base point hit test.
+    return insertEntity.isHit(x, y);
   }
 }
 
@@ -528,17 +553,12 @@ class CanvasRenderer {
     this.ctx = canvas.getContext('2d');
     this.drawing = drawing;
     this.viewModel = viewModel;
-
     this.isMouseDown = false;
     this.lastX = 0;
     this.lastY = 0;
-
-    // Setup event listeners
     this.canvas.addEventListener('mousedown', (evt) => this.onMouseDown(evt));
     this.canvas.addEventListener('mousemove', (evt) => this.onMouseMove(evt));
     this.canvas.addEventListener('mouseup', (evt) => this.onMouseUp(evt));
-
-    // Render loop
     requestAnimationFrame(() => this.renderLoop());
   }
 
@@ -561,7 +581,6 @@ class CanvasRenderer {
   onMouseMove(evt) {
     const pos = this.getMousePos(evt);
     if (this.isMouseDown && this.viewModel.currentTool === 'select') {
-      // We are dragging selected entities
       const dx = pos.x - this.lastX;
       const dy = pos.y - this.lastY;
       this.viewModel.moveSelection(dx, dy);
@@ -579,10 +598,8 @@ class CanvasRenderer {
 
   renderLoop() {
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-    // Draw all entities
     for (let ent of this.drawing.entities) {
       if (ent instanceof InsertEntity) {
-        // special draw to pass block dictionary
         ent.draw(this.ctx, this.drawing.blocks);
       } else {
         ent.draw(this.ctx);
@@ -598,17 +615,6 @@ class CanvasRenderer {
   ===============================
 */
 
-/**
- * Minimal DXF Exporter. Exports:
- * - LINE
- * - CIRCLE
- * - TEXT
- * - BLOCKS with contained geometry
- * - INSERT
- * Skips unselected or selected, we just export everything. Adjust as needed.
- *
- * NOTE: Real DXF has many more group codes; here we just illustrate the concept.
- */
 function exportDXF(drawing) {
   let dxf = [];
   dxf.push("0");
@@ -618,18 +624,16 @@ function exportDXF(drawing) {
   dxf.push("9");
   dxf.push("$ACADVER");
   dxf.push("1");
-  dxf.push("AC1009"); // (DXF R12)
+  dxf.push("AC1009");
   dxf.push("0");
   dxf.push("ENDSEC");
 
-  // BLOCKS section
   dxf.push("0");
   dxf.push("SECTION");
   dxf.push("2");
   dxf.push("BLOCKS");
   for (let blockName in drawing.blocks) {
     const block = drawing.blocks[blockName];
-    // Correct Block header with base point definition
     dxf.push("0");
     dxf.push("BLOCK");
     dxf.push("2");
@@ -640,7 +644,6 @@ function exportDXF(drawing) {
     dxf.push("0");
     dxf.push("20");
     dxf.push("0");
-    // Entities in block
     for (let e of block.entities) {
       dxf.push(...entityToDXF(e));
     }
@@ -650,8 +653,6 @@ function exportDXF(drawing) {
   dxf.push("0");
   dxf.push("ENDSEC");
 
-
-  // ENTITIES section
   dxf.push("0");
   dxf.push("SECTION");
   dxf.push("2");
@@ -673,7 +674,7 @@ function entityToDXF(ent) {
     result.push("0");
     result.push("LINE");
     result.push("8");
-    result.push("0");  // layer name
+    result.push("0");
     result.push("10");
     result.push(ent.x1);
     result.push("20");
@@ -694,19 +695,13 @@ function entityToDXF(ent) {
     result.push("40");
     result.push(ent.r);
   } else if (ent instanceof RectangleEntity) {
-    // We'll just export as a polyline or 4 lines. 
-    // For brevity, let's do 4 lines:
     const x1 = ent.x, y1 = ent.y;
     const x2 = ent.x + ent.width, y2 = ent.y;
     const x3 = ent.x + ent.width, y3 = ent.y + ent.height;
     const x4 = ent.x, y4 = ent.y + ent.height;
-    // top
     result.push(...entityToDXF(new LineEntity(x1,y1,x2,y2)));
-    // right
     result.push(...entityToDXF(new LineEntity(x2,y2,x3,y3)));
-    // bottom
     result.push(...entityToDXF(new LineEntity(x3,y3,x4,y4)));
-    // left
     result.push(...entityToDXF(new LineEntity(x4,y4,x1,y1)));
   } else if (ent instanceof TextEntity) {
     result.push("0");
@@ -720,7 +715,7 @@ function entityToDXF(ent) {
     result.push("1");
     result.push(ent.text);
     result.push("40");
-    result.push("16"); // text height
+    result.push("16");
   } else if (ent instanceof InsertEntity) {
     result.push("0");
     result.push("INSERT");
@@ -737,11 +732,8 @@ function entityToDXF(ent) {
 }
 
 function importDXF(dxfString, drawing) {
-  // Reset the drawing
   drawing.entities = [];
   drawing.blocks = {};
-
-  // Split the DXF file into non-empty trimmed lines and then into pairs
   const lines = dxfString.split(/\r?\n/).map(l => l.trim()).filter(l => l !== "");
   const pairs = [];
   for (let i = 0; i < lines.length; i += 2) {
@@ -749,7 +741,6 @@ function importDXF(dxfString, drawing) {
     const value = lines[i + 1] || "";
     pairs.push({ code, value });
   }
-
   let index = 0;
   function nextPair() {
     return pairs[index++] || { code: null, value: null };
@@ -757,24 +748,21 @@ function importDXF(dxfString, drawing) {
   function peekPair() {
     return pairs[index] || { code: null, value: null };
   }
-  // Skip until the next entity start (i.e. a group code "0")
   function skipToNextEntity() {
     while (index < pairs.length && peekPair().code !== "0") {
       index++;
     }
   }
-  // Skip a section by advancing until the ENDSEC or EOF marker is found and consumed
   function skipSection() {
     while (index < pairs.length) {
       let p = peekPair();
       if (p.code === "0" && (p.value === "ENDSEC" || p.value === "EOF")) {
-        nextPair(); // consume the ENDSEC/EOF marker
+        nextPair();
         break;
       }
       index++;
     }
   }
-
   function parseEntitiesInto(arrayRef) {
     while (index < pairs.length) {
       let pair = peekPair();
@@ -785,8 +773,7 @@ function importDXF(dxfString, drawing) {
           const e = convertDXFEntityToModel(entityData);
           if (e) arrayRef.push(e);
         } else {
-          // Unknown entity – skip this entity's group codes
-          nextPair(); // skip the "0",<unknown type>
+          nextPair();
           skipToNextEntity();
         }
       } else {
@@ -794,7 +781,6 @@ function importDXF(dxfString, drawing) {
       }
     }
   }
-
   function parseBlocks() {
     while (index < pairs.length) {
       let pair = peekPair();
@@ -810,16 +796,15 @@ function importDXF(dxfString, drawing) {
       }
     }
   }
-
   function parseOneBlock() {
-    nextPair(); // consume "0","BLOCK"
+    nextPair();
     let blockName = "UnnamedBlock";
     const blockEntities = [];
     while (index < pairs.length) {
       let p = peekPair();
       if (p.code === "0") {
         if (p.value === "ENDBLK" || p.value === "EOF") {
-          nextPair(); // consume ENDBLK
+          nextPair();
           break;
         }
         if (["LINE", "CIRCLE", "TEXT", "INSERT"].includes(p.value)) {
@@ -836,18 +821,15 @@ function importDXF(dxfString, drawing) {
         }
       }
     }
-    // Convert collected block entities into real Entity instances and store them
     const realEntities = blockEntities
       .map(e => convertDXFEntityToModel(e))
       .filter(e => e !== null);
     drawing.blocks[blockName] = new Block(blockName, realEntities);
   }
-
   function parseOneEntity() {
-    let first = nextPair(); // e.g. 0,LINE (entity type)
+    let first = nextPair();
     let type = first.value;
     const data = { type };
-    // Continue reading pairs until the next "0" code signals a new entity or section
     while (index < pairs.length) {
       let p = peekPair();
       if (p.code === "0") break;
@@ -880,8 +862,6 @@ function importDXF(dxfString, drawing) {
     }
     return data;
   }
-
-  // Main parsing loop: look for sections and dispatch accordingly
   while (index < pairs.length) {
     let pair = nextPair();
     if (pair.code === "0" && pair.value === "SECTION") {
@@ -906,10 +886,6 @@ function importDXF(dxfString, drawing) {
   }
 }
 
-
-/**
- * Convert the parsed lightweight object to a real Entity instance.
- */
 function convertDXFEntityToModel(e) {
   if (e.type === 'LINE') {
     return new LineEntity(e.x1||0, e.y1||0, e.x2||0, e.y2||0);
@@ -920,9 +896,8 @@ function convertDXFEntityToModel(e) {
   } else if (e.type === 'INSERT') {
     return new InsertEntity(e.blockName||"?", e.x||0, e.y||0);
   }
-  return null; // or skip
+  return null;
 }
-
 
 /*
   ===============================
@@ -933,7 +908,6 @@ function convertDXFEntityToModel(e) {
 (function(){
   const drawing = new Drawing();
   const viewModel = new DrawingViewModel(drawing);
-
   const canvas = document.getElementById('drawingCanvas');
   const renderer = new CanvasRenderer(canvas, drawing, viewModel);
 
@@ -972,7 +946,6 @@ function convertDXFEntityToModel(e) {
   document.getElementById('saveDXF').addEventListener('click', ()=>{
     const dxfStr = exportDXF(drawing);
     document.getElementById('dxfOutput').value = dxfStr;
-    // Optionally download
     const blob = new Blob([dxfStr], {type: 'text/plain'});
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
@@ -992,7 +965,6 @@ function convertDXFEntityToModel(e) {
     };
     reader.readAsText(file);
   });
-
 })();
 </script>
 
