@@ -36,9 +36,10 @@
 <div id="toolbar">
   <button id="selectTool">Select</button>
   <button id="lineTool">Line</button>
-  <button id="rectTool">Rectangle</button>
+  <button id="rectTool">Rectangle (via Polyline)</button>
   <button id="circleTool">Circle</button>
   <button id="textTool">Text</button>
+  <button id="polylineTool">Polyline</button>
   <button id="createBlock">Create BLOCK from Selection</button>
   <button id="insertBlock">INSERT Block</button>
   <button id="saveDXF">Save DXF</button>
@@ -102,30 +103,50 @@ class LineEntity extends Entity {
   }
 }
 
-class RectangleEntity extends Entity {
-  constructor(x, y, w, h) {
+class PolylineEntity extends Entity {
+  constructor(vertices, closed = false) {
     super();
-    this.x = x;
-    this.y = y;
-    this.width = w;
-    this.height = h;
+    this.vertices = vertices || [];
+    this.closed = closed;
   }
 
   draw(ctx) {
+    if (this.vertices.length === 0) return;
     ctx.save();
+    ctx.beginPath();
     ctx.strokeStyle = this.selected ? 'red' : 'black';
-    ctx.strokeRect(this.x, this.y, this.width, this.height);
+    ctx.moveTo(this.vertices[0].x, this.vertices[0].y);
+    for (let i = 1; i < this.vertices.length; i++) {
+      ctx.lineTo(this.vertices[i].x, this.vertices[i].y);
+    }
+    if (this.closed) {
+      ctx.closePath();
+    }
+    ctx.stroke();
     ctx.restore();
   }
 
-  isHit(px, py) {
-    return (px >= this.x && px <= this.x + this.width &&
-            py >= this.y && py <= this.y + this.height);
+  isHit(x, y) {
+    for (let i = 0; i < this.vertices.length - 1; i++) {
+      let v1 = this.vertices[i];
+      let v2 = this.vertices[i+1];
+      const dist = pointLineDistance(x, y, v1.x, v1.y, v2.x, v2.y);
+      if (dist < 5) return true;
+    }
+    if (this.closed && this.vertices.length > 1) {
+      let v1 = this.vertices[this.vertices.length - 1];
+      let v2 = this.vertices[0];
+      const dist = pointLineDistance(x, y, v1.x, v1.y, v2.x, v2.y);
+      if (dist < 5) return true;
+    }
+    return false;
   }
 
   move(dx, dy) {
-    this.x += dx;
-    this.y += dy;
+    this.vertices.forEach(v => {
+      v.x += dx;
+      v.y += dy;
+    });
   }
 }
 
@@ -211,7 +232,7 @@ class Block {
 }
 
 /**
- * INSERT references a Block by name, with a position (and optional scale/rotation).
+ * INSERT references a Block by name, with a position.
  */
 class InsertEntity extends Entity {
   constructor(blockName, x, y) {
@@ -221,7 +242,6 @@ class InsertEntity extends Entity {
     this.y = y;
   }
 
-  // The draw method accepts the block definitions to render the inserted block.
   draw(ctx, blocks) {
     const block = blocks[this.blockName];
     if (!block) return;
@@ -235,7 +255,6 @@ class InsertEntity extends Entity {
     }
     ctx.restore();
 
-    // If selected, mark the base point
     if (this.selected) {
       ctx.save();
       ctx.strokeStyle = 'red';
@@ -246,7 +265,6 @@ class InsertEntity extends Entity {
     }
   }
 
-  // Fallback hit test (used if no block geometry available)
   isHit(px, py) {
     const dx = px - this.x;
     const dy = py - this.y;
@@ -260,9 +278,7 @@ class InsertEntity extends Entity {
 }
 
 /**
- * The main Drawing model that contains:
- * - A list of top-level entities (lines, circles, text, inserts, etc.)
- * - A dictionary of block definitions
+ * The main Drawing model that contains top-level entities and block definitions.
  */
 class Drawing {
   constructor() {
@@ -277,12 +293,12 @@ class Drawing {
   ===============================
 */
 
-// Basic function to clone an entity (for Block definitions)
 function cloneEntity(entity) {
   if (entity instanceof LineEntity) {
     return new LineEntity(entity.x1, entity.y1, entity.x2, entity.y2);
-  } else if (entity instanceof RectangleEntity) {
-    return new RectangleEntity(entity.x, entity.y, entity.width, entity.height);
+  } else if (entity instanceof PolylineEntity) {
+    const verts = entity.vertices.map(v => ({x: v.x, y: v.y}));
+    return new PolylineEntity(verts, entity.closed);
   } else if (entity instanceof CircleEntity) {
     return new CircleEntity(entity.cx, entity.cy, entity.r);
   } else if (entity instanceof TextEntity) {
@@ -293,7 +309,6 @@ function cloneEntity(entity) {
   return null;
 }
 
-// Distance from point to line segment
 function pointLineDistance(px, py, x1, y1, x2, y2) {
   const A = px - x1;
   const B = py - y1;
@@ -330,6 +345,7 @@ class DrawingViewModel {
     this.tempEntity = null;
     this.startX = 0;
     this.startY = 0;
+    this.isDragging = false;
     this.blockToInsert = null;
   }
 
@@ -354,6 +370,7 @@ class DrawingViewModel {
           this.clearSelection();
         }
       }
+      this.isDragging = true;
       this.startX = x;
       this.startY = y;
     } else if (this.currentTool === 'line') {
@@ -362,7 +379,13 @@ class DrawingViewModel {
       this.startX = x;
       this.startY = y;
     } else if (this.currentTool === 'rect') {
-      this.tempEntity = new RectangleEntity(x, y, 0, 0);
+      // Draw rectangle using polyline
+      this.tempEntity = new PolylineEntity([
+        {x: x, y: y},
+        {x: x, y: y},
+        {x: x, y: y},
+        {x: x, y: y}
+      ], true);
       this.drawing.entities.push(this.tempEntity);
       this.startX = x;
       this.startY = y;
@@ -378,6 +401,27 @@ class DrawingViewModel {
         this.drawing.entities.push(this.tempEntity);
       }
       this.tempEntity = null;
+    } else if (this.currentTool === 'polyline') {
+      if (!this.tempEntity) {
+        // Start new polyline: add first point twice for preview
+        this.tempEntity = new PolylineEntity([{x: x, y: y}, {x: x, y: y}], false);
+        this.drawing.entities.push(this.tempEntity);
+      } else {
+        // Check if click is near first vertex to finish
+        let first = this.tempEntity.vertices[0];
+        const dx = x - first.x;
+        const dy = y - first.y;
+        if (Math.sqrt(dx*dx + dy*dy) < 5 && this.tempEntity.vertices.length > 2) {
+          // Finish polyline and close it
+          this.tempEntity.vertices[this.tempEntity.vertices.length - 1] = {x: first.x, y: first.y};
+          this.tempEntity.closed = true;
+          this.tempEntity = null;
+        } else {
+          // Commit current preview vertex and add a new preview
+          this.tempEntity.vertices[this.tempEntity.vertices.length - 1] = {x: x, y: y};
+          this.tempEntity.vertices.push({x: x, y: y});
+        }
+      }
     } else if (this.currentTool === 'insertBlock') {
       if (this.blockToInsert) {
         const insertEnt = new InsertEntity(this.blockToInsert, x, y);
@@ -391,23 +435,34 @@ class DrawingViewModel {
       this.tempEntity.x2 = x;
       this.tempEntity.y2 = y;
     } else if (this.currentTool === 'rect' && this.tempEntity) {
-      this.tempEntity.width = x - this.tempEntity.x;
-      this.tempEntity.height = y - this.tempEntity.y;
+      // Update rectangle vertices based on start point and current mouse position
+      this.tempEntity.vertices = [
+        {x: this.startX, y: this.startY},
+        {x: x, y: this.startY},
+        {x: x, y: y},
+        {x: this.startX, y: y}
+      ];
     } else if (this.currentTool === 'circle' && this.tempEntity) {
       const dx = x - this.tempEntity.cx;
       const dy = y - this.tempEntity.cy;
       this.tempEntity.r = Math.sqrt(dx*dx + dy*dy);
-    } else if (this.currentTool === 'select') {
-      // For dragging selected entities
-      // This is handled in the renderer's mousemove
+    } else if (this.currentTool === 'polyline' && this.tempEntity) {
+      // Update the preview point
+      this.tempEntity.vertices[this.tempEntity.vertices.length - 1] = {x: x, y: y};
+    } else if (this.currentTool === 'select' && this.isDragging) {
+      const dx = x - this.startX;
+      const dy = y - this.startY;
+      this.moveSelection(dx, dy);
+      this.startX = x;
+      this.startY = y;
     }
   }
 
   mouseUp(x, y) {
+    this.isDragging = false;
     this.tempEntity = null;
   }
 
-  // Updated findHitEntity now distinguishes INSERT entities with a custom hit test.
   findHitEntity(x, y) {
     for (let i = this.drawing.entities.length - 1; i >= 0; i--) {
       const ent = this.drawing.entities[i];
@@ -435,8 +490,9 @@ class DrawingViewModel {
   offsetEntity(entity, dx, dy) {
     if (entity instanceof LineEntity) {
       return new LineEntity(entity.x1 - dx, entity.y1 - dy, entity.x2 - dx, entity.y2 - dy);
-    } else if (entity instanceof RectangleEntity) {
-      return new RectangleEntity(entity.x - dx, entity.y - dy, entity.width, entity.height);
+    } else if (entity instanceof PolylineEntity) {
+      const newVerts = entity.vertices.map(v => ({x: v.x - dx, y: v.y - dy}));
+      return new PolylineEntity(newVerts, entity.closed);
     } else if (entity instanceof CircleEntity) {
       return new CircleEntity(entity.cx - dx, entity.cy - dy, entity.r);
     } else if (entity instanceof TextEntity) {
@@ -453,9 +509,11 @@ class DrawingViewModel {
       if (e instanceof LineEntity) {
         minX = Math.min(minX, e.x1, e.x2);
         minY = Math.min(minY, e.y1, e.y2);
-      } else if (e instanceof RectangleEntity) {
-        minX = Math.min(minX, e.x);
-        minY = Math.min(minY, e.y);
+      } else if (e instanceof PolylineEntity) {
+        e.vertices.forEach(v => {
+          minX = Math.min(minX, v.x);
+          minY = Math.min(minY, v.y);
+        });
       } else if (e instanceof CircleEntity) {
         minX = Math.min(minX, e.cx);
         minY = Math.min(minY, e.cy);
@@ -475,7 +533,6 @@ class DrawingViewModel {
     this.blockToInsert = blockName;
   }
 
-  // Helper: compute bounding box for a given entity in its local coordinates.
   getEntityBounds(e) {
     if (e instanceof LineEntity) {
       return {
@@ -484,13 +541,15 @@ class DrawingViewModel {
         maxX: Math.max(e.x1, e.x2),
         maxY: Math.max(e.y1, e.y2)
       };
-    } else if (e instanceof RectangleEntity) {
-      return {
-        minX: e.x,
-        minY: e.y,
-        maxX: e.x + e.width,
-        maxY: e.y + e.height
-      };
+    } else if (e instanceof PolylineEntity) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      e.vertices.forEach(v => {
+        minX = Math.min(minX, v.x);
+        minY = Math.min(minY, v.y);
+        maxX = Math.max(maxX, v.x);
+        maxY = Math.max(maxY, v.y);
+      });
+      return { minX, minY, maxX, maxY };
     } else if (e instanceof CircleEntity) {
       return {
         minX: e.cx - e.r,
@@ -499,7 +558,6 @@ class DrawingViewModel {
         maxY: e.cy + e.r
       };
     } else if (e instanceof TextEntity) {
-      // Approximate dimensions: 50px wide and 16px tall.
       return {
         minX: e.x,
         minY: e.y - 16,
@@ -517,7 +575,6 @@ class DrawingViewModel {
     return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   }
 
-  // New helper: enhanced hit test for INSERT entities that uses the block's bounding box.
   hitTestInsert(insertEntity, x, y) {
     const block = this.drawing.blocks[insertEntity.blockName];
     if (block && block.entities.length > 0) {
@@ -529,14 +586,12 @@ class DrawingViewModel {
           maxX = Math.max(maxX, b.maxX);
           maxY = Math.max(maxY, b.maxY);
       });
-      // Translate block bounds into world coordinates.
       minX += insertEntity.x;
       minY += insertEntity.y;
       maxX += insertEntity.x;
       maxY += insertEntity.y;
       if (x >= minX && x <= maxX && y >= minY && y <= maxY) return true;
     }
-    // Fallback to base point hit test.
     return insertEntity.isHit(x, y);
   }
 }
@@ -580,13 +635,6 @@ class CanvasRenderer {
 
   onMouseMove(evt) {
     const pos = this.getMousePos(evt);
-    if (this.isMouseDown && this.viewModel.currentTool === 'select') {
-      const dx = pos.x - this.lastX;
-      const dy = pos.y - this.lastY;
-      this.viewModel.moveSelection(dx, dy);
-      this.lastX = pos.x;
-      this.lastY = pos.y;
-    }
     this.viewModel.mouseMove(pos.x, pos.y);
   }
 
@@ -694,15 +742,27 @@ function entityToDXF(ent) {
     result.push(ent.cy);
     result.push("40");
     result.push(ent.r);
-  } else if (ent instanceof RectangleEntity) {
-    const x1 = ent.x, y1 = ent.y;
-    const x2 = ent.x + ent.width, y2 = ent.y;
-    const x3 = ent.x + ent.width, y3 = ent.y + ent.height;
-    const x4 = ent.x, y4 = ent.y + ent.height;
-    result.push(...entityToDXF(new LineEntity(x1,y1,x2,y2)));
-    result.push(...entityToDXF(new LineEntity(x2,y2,x3,y3)));
-    result.push(...entityToDXF(new LineEntity(x3,y3,x4,y4)));
-    result.push(...entityToDXF(new LineEntity(x4,y4,x1,y1)));
+  } else if (ent instanceof PolylineEntity) {
+    result.push("0");
+    result.push("POLYLINE");
+    result.push("8");
+    result.push("0");
+    result.push("66");
+    result.push("1");
+    result.push("70");
+    result.push(ent.closed ? "1" : "0");
+    for (let v of ent.vertices) {
+      result.push("0");
+      result.push("VERTEX");
+      result.push("8");
+      result.push("0");
+      result.push("10");
+      result.push(v.x);
+      result.push("20");
+      result.push(v.y);
+    }
+    result.push("0");
+    result.push("SEQEND");
   } else if (ent instanceof TextEntity) {
     result.push("0");
     result.push("TEXT");
@@ -768,7 +828,7 @@ function importDXF(dxfString, drawing) {
       let pair = peekPair();
       if (pair.code === "0") {
         if (pair.value === "ENDSEC" || pair.value === "EOF") break;
-        if (["LINE", "CIRCLE", "TEXT", "INSERT"].includes(pair.value)) {
+        if (["LINE", "CIRCLE", "TEXT", "INSERT", "POLYLINE"].includes(pair.value)) {
           const entityData = parseOneEntity();
           const e = convertDXFEntityToModel(entityData);
           if (e) arrayRef.push(e);
@@ -807,7 +867,7 @@ function importDXF(dxfString, drawing) {
           nextPair();
           break;
         }
-        if (["LINE", "CIRCLE", "TEXT", "INSERT"].includes(p.value)) {
+        if (["LINE", "CIRCLE", "TEXT", "INSERT", "POLYLINE"].includes(p.value)) {
           const entityData = parseOneEntity();
           blockEntities.push(entityData);
         } else {
@@ -826,41 +886,78 @@ function importDXF(dxfString, drawing) {
       .filter(e => e !== null);
     drawing.blocks[blockName] = new Block(blockName, realEntities);
   }
-  function parseOneEntity() {
-    let first = nextPair();
-    let type = first.value;
-    const data = { type };
+  function parseVertex() {
+    let vertexType = nextPair(); // should be "VERTEX"
+    let x = 0, y = 0;
     while (index < pairs.length) {
       let p = peekPair();
       if (p.code === "0") break;
       p = nextPair();
-      const gc = p.code;
-      const gv = p.value;
-      switch (type) {
-        case "LINE":
-          if (gc === "10") data.x1 = parseFloat(gv);
-          else if (gc === "20") data.y1 = parseFloat(gv);
-          else if (gc === "11") data.x2 = parseFloat(gv);
-          else if (gc === "21") data.y2 = parseFloat(gv);
-          break;
-        case "CIRCLE":
-          if (gc === "10") data.cx = parseFloat(gv);
-          else if (gc === "20") data.cy = parseFloat(gv);
-          else if (gc === "40") data.r = parseFloat(gv);
-          break;
-        case "TEXT":
-          if (gc === "10") data.x = parseFloat(gv);
-          else if (gc === "20") data.y = parseFloat(gv);
-          else if (gc === "1") data.text = gv;
-          break;
-        case "INSERT":
-          if (gc === "2") data.blockName = gv;
-          else if (gc === "10") data.x = parseFloat(gv);
-          else if (gc === "20") data.y = parseFloat(gv);
-          break;
-      }
+      if (p.code === "10") x = parseFloat(p.value);
+      else if (p.code === "20") y = parseFloat(p.value);
     }
-    return data;
+    return { x, y };
+  }
+  function parseOneEntity() {
+    let first = nextPair();
+    let type = first.value;
+    if (type === "POLYLINE") {
+      let vertices = [];
+      let closed = false;
+      while (index < pairs.length) {
+        let next = peekPair();
+        if (next.code === "0") {
+          if (next.value === "VERTEX") {
+            let vertexData = parseVertex();
+            vertices.push(vertexData);
+          } else if (next.value === "SEQEND") {
+            nextPair();
+            break;
+          } else {
+            break;
+          }
+        } else {
+          let headerPair = nextPair();
+          if (headerPair.code === "70") {
+            closed = parseInt(headerPair.value) === 1;
+          }
+        }
+      }
+      return { type: "POLYLINE", vertices: vertices, closed: closed };
+    } else {
+      const data = { type };
+      while (index < pairs.length) {
+        let p = peekPair();
+        if (p.code === "0") break;
+        p = nextPair();
+        const gc = p.code;
+        const gv = p.value;
+        switch (type) {
+          case "LINE":
+            if (gc === "10") data.x1 = parseFloat(gv);
+            else if (gc === "20") data.y1 = parseFloat(gv);
+            else if (gc === "11") data.x2 = parseFloat(gv);
+            else if (gc === "21") data.y2 = parseFloat(gv);
+            break;
+          case "CIRCLE":
+            if (gc === "10") data.cx = parseFloat(gv);
+            else if (gc === "20") data.cy = parseFloat(gv);
+            else if (gc === "40") data.r = parseFloat(gv);
+            break;
+          case "TEXT":
+            if (gc === "10") data.x = parseFloat(gv);
+            else if (gc === "20") data.y = parseFloat(gv);
+            else if (gc === "1") data.text = gv;
+            break;
+          case "INSERT":
+            if (gc === "2") data.blockName = gv;
+            else if (gc === "10") data.x = parseFloat(gv);
+            else if (gc === "20") data.y = parseFloat(gv);
+            break;
+        }
+      }
+      return data;
+    }
   }
   while (index < pairs.length) {
     let pair = nextPair();
@@ -895,6 +992,8 @@ function convertDXFEntityToModel(e) {
     return new TextEntity(e.x||0, e.y||0, e.text||"");
   } else if (e.type === 'INSERT') {
     return new InsertEntity(e.blockName||"?", e.x||0, e.y||0);
+  } else if (e.type === 'POLYLINE') {
+    return new PolylineEntity(e.vertices, e.closed);
   }
   return null;
 }
@@ -925,6 +1024,9 @@ function convertDXFEntityToModel(e) {
   });
   document.getElementById('textTool').addEventListener('click', ()=>{
     viewModel.setTool('text');
+  });
+  document.getElementById('polylineTool').addEventListener('click', ()=>{
+    viewModel.setTool('polyline');
   });
 
   document.getElementById('createBlock').addEventListener('click', ()=>{
