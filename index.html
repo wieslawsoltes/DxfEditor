@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Minimal OOP Drawing App (MVVM, DXF) with Pan/Zoom and Block Editing</title>
+  <title>Minimal OOP Drawing App (MVVM, DXF) with Pan/Zoom, Block & Entity Editing</title>
   <style>
     body {
       font-family: sans-serif;
@@ -31,7 +31,7 @@
       height: 120px;
     }
     /* Modal styles for block editor */
-    #blockEditorOverlay {
+    #blockEditorOverlay, #entityEditorOverlay {
       display: none;
       position: fixed;
       top: 0;
@@ -41,7 +41,7 @@
       background: rgba(0,0,0,0.5);
       z-index: 900;
     }
-    #blockEditorModal {
+    #blockEditorModal, #entityEditorModal {
       display: none;
       position: fixed;
       top: 50%;
@@ -54,11 +54,11 @@
       width: 400px;
       box-shadow: 0 0 10px rgba(0,0,0,0.5);
     }
-    #blockEditorModal textarea {
+    #blockEditorModal textarea, #entityEditorModal textarea {
       width: 100%;
       height: 200px;
     }
-    #blockEditorModal button {
+    #blockEditorModal button, #entityEditorModal button {
       margin-top: 8px;
       margin-right: 4px;
     }
@@ -78,6 +78,7 @@
   <button id="createBlock">Create BLOCK from Selection</button>
   <button id="insertBlock">INSERT Block</button>
   <button id="editBlock">Edit Block</button>
+  <button id="editEntity">Edit Entity</button>
   <button id="saveDXF">Save DXF</button>
   <input type="file" id="loadDXFFile" accept=".dxf,text/plain" />
 </div>
@@ -99,6 +100,16 @@
   <br>
   <button id="saveBlockEdit">Save Block Edit</button>
   <button id="cancelBlockEdit">Cancel</button>
+</div>
+
+<!-- Entity Editor Modal -->
+<div id="entityEditorOverlay"></div>
+<div id="entityEditorModal">
+  <h3>Edit Entity</h3>
+  <textarea id="entityEditorTextarea"></textarea>
+  <br>
+  <button id="saveEntityEdit">Save Entity Edit</button>
+  <button id="cancelEntityEdit">Cancel</button>
 </div>
 
 <script>
@@ -1115,13 +1126,11 @@ function convertDXFEntityToModel(e) {
 
 /*
   ===============================
-  ========== Block Editing ======
+  ========== Conversion =========
   ===============================
 */
-
-// We'll allow block editing via a simple JSON editor modal.
-let currentEditingBlockName = null;
-
+// These helper functions convert between an entity instance and a plain object
+// representation for editing via JSON.
 function entityToObject(entity) {
   if (entity instanceof LineEntity) {
     return { type: "Line", x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
@@ -1131,6 +1140,8 @@ function entityToObject(entity) {
     return { type: "Circle", cx: entity.cx, cy: entity.cy, r: entity.r };
   } else if (entity instanceof TextEntity) {
     return { type: "Text", x: entity.x, y: entity.y, text: entity.text };
+  } else if (entity instanceof InsertEntity) {
+    return { type: "Insert", blockName: entity.blockName, x: entity.x, y: entity.y };
   }
   return null;
 }
@@ -1144,9 +1155,60 @@ function objectToEntity(obj) {
     return new CircleEntity(obj.cx, obj.cy, obj.r);
   } else if (obj.type === "Text") {
     return new TextEntity(obj.x, obj.y, obj.text);
+  } else if (obj.type === "Insert") {
+    return new InsertEntity(obj.blockName, obj.x, obj.y);
   }
   return null;
 }
+
+/*
+  ===============================
+  ========== Editing UI =========
+  ===============================
+*/
+// For block editing we already have the modal and handlers.
+// Now add support for editing a single entity.
+let currentEditingEntityIndex = null;
+
+document.getElementById('editEntity').addEventListener('click', () => {
+  const selectedEntities = drawing.entities.filter(e => e.selected);
+  if (selectedEntities.length !== 1) {
+    alert("Please select exactly one entity to edit.");
+    return;
+  }
+  currentEditingEntityIndex = drawing.entities.findIndex(e => e.selected);
+  const entity = drawing.entities[currentEditingEntityIndex];
+  const obj = entityToObject(entity);
+  const jsonStr = JSON.stringify(obj, null, 2);
+  document.getElementById('entityEditorTextarea').value = jsonStr;
+  document.getElementById('entityEditorOverlay').style.display = 'block';
+  document.getElementById('entityEditorModal').style.display = 'block';
+});
+
+document.getElementById('saveEntityEdit').addEventListener('click', () => {
+  try {
+    const jsonStr = document.getElementById('entityEditorTextarea').value;
+    const obj = JSON.parse(jsonStr);
+    const newEntity = objectToEntity(obj);
+    if(newEntity === null) {
+      alert("Invalid entity type.");
+      return;
+    }
+    newEntity.selected = true;
+    drawing.entities[currentEditingEntityIndex] = newEntity;
+    document.getElementById('entityEditorOverlay').style.display = 'none';
+    document.getElementById('entityEditorModal').style.display = 'none';
+    currentEditingEntityIndex = null;
+  } catch (e) {
+    alert("Error parsing JSON: " + e.message);
+  }
+});
+
+document.getElementById('cancelEntityEdit').addEventListener('click', () => {
+  document.getElementById('entityEditorOverlay').style.display = 'none';
+  document.getElementById('entityEditorModal').style.display = 'none';
+  currentEditingEntityIndex = null;
+});
 
 /*
   ===============================
