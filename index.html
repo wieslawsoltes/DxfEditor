@@ -515,8 +515,8 @@ class DrawingViewModel {
           minY = Math.min(minY, v.y);
         });
       } else if (e instanceof CircleEntity) {
-        minX = Math.min(minX, e.cx);
-        minY = Math.min(minY, e.cy);
+        minX = Math.min(minX, e.cx - e.r);
+        minY = Math.min(minY, e.cy - e.r);
       } else if (e instanceof TextEntity) {
         minX = Math.min(minX, e.x);
         minY = Math.min(minY, e.y);
