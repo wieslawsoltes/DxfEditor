@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Minimal OOP Drawing App (MVVM, DXF)</title>
+  <title>Minimal OOP Drawing App (MVVM, DXF) with Pan/Zoom</title>
   <style>
     body {
       font-family: sans-serif;
@@ -13,6 +13,7 @@
       width: 800px;
       height: 600px;
       position: relative;
+      overflow: hidden;
     }
     #drawingCanvas {
       position: absolute;
@@ -34,6 +35,8 @@
 <body>
 
 <div id="toolbar">
+  <button id="newDrawing">New Drawing</button>
+  <button id="panTool">Pan</button>
   <button id="selectTool">Select</button>
   <button id="lineTool">Line</button>
   <button id="rectTool">Rectangle (via Polyline)</button>
@@ -608,12 +611,25 @@ class CanvasRenderer {
     this.ctx = canvas.getContext('2d');
     this.drawing = drawing;
     this.viewModel = viewModel;
+
+    // Pan/Zoom properties
+    this.panX = 0;
+    this.panY = 0;
+    this.scale = 1;
+    this.isPanning = false;
+    this.panStartX = 0;
+    this.panStartY = 0;
+
+    // Existing drawing events
     this.isMouseDown = false;
     this.lastX = 0;
     this.lastY = 0;
+
     this.canvas.addEventListener('mousedown', (evt) => this.onMouseDown(evt));
     this.canvas.addEventListener('mousemove', (evt) => this.onMouseMove(evt));
     this.canvas.addEventListener('mouseup', (evt) => this.onMouseUp(evt));
+    this.canvas.addEventListener('wheel', (evt) => this.onWheel(evt));
+
     requestAnimationFrame(() => this.renderLoop());
   }
 
@@ -626,26 +642,81 @@ class CanvasRenderer {
   }
 
   onMouseDown(evt) {
-    this.isMouseDown = true;
     const pos = this.getMousePos(evt);
+    if (this.viewModel.currentTool === 'pan') {
+      this.isPanning = true;
+      this.panStartX = pos.x;
+      this.panStartY = pos.y;
+      return;
+    }
+    this.isMouseDown = true;
     this.lastX = pos.x;
     this.lastY = pos.y;
-    this.viewModel.mouseDown(pos.x, pos.y, evt.shiftKey);
+    // Convert mouse coordinates to drawing coordinates
+    const tx = (pos.x - this.panX) / this.scale;
+    const ty = (pos.y - this.panY) / this.scale;
+    this.viewModel.mouseDown(tx, ty, evt.shiftKey);
   }
 
   onMouseMove(evt) {
     const pos = this.getMousePos(evt);
-    this.viewModel.mouseMove(pos.x, pos.y);
+    if (this.viewModel.currentTool === 'pan' && this.isPanning) {
+         let dx = pos.x - this.panStartX;
+         let dy = pos.y - this.panStartY;
+         this.panX += dx;
+         this.panY += dy;
+         this.panStartX = pos.x;
+         this.panStartY = pos.y;
+         return;
+    }
+    if (this.isMouseDown) {
+         const tx = (pos.x - this.panX) / this.scale;
+         const ty = (pos.y - this.panY) / this.scale;
+         this.viewModel.mouseMove(tx, ty);
+    }
   }
 
   onMouseUp(evt) {
-    this.isMouseDown = false;
     const pos = this.getMousePos(evt);
-    this.viewModel.mouseUp(pos.x, pos.y);
+    if (this.viewModel.currentTool === 'pan') {
+         this.isPanning = false;
+         return;
+    }
+    this.isMouseDown = false;
+    const tx = (pos.x - this.panX) / this.scale;
+    const ty = (pos.y - this.panY) / this.scale;
+    this.viewModel.mouseUp(tx, ty);
+  }
+
+  onWheel(evt) {
+    evt.preventDefault();
+    const mousePos = this.getMousePos(evt);
+    // Convert mouse position to drawing coordinates before zooming
+    const x = (mousePos.x - this.panX) / this.scale;
+    const y = (mousePos.y - this.panY) / this.scale;
+    const zoomFactor = 1.1;
+    if (evt.deltaY < 0) {
+      // Zoom in
+      this.scale *= zoomFactor;
+    } else {
+      // Zoom out
+      this.scale /= zoomFactor;
+    }
+    // Adjust pan so that the drawing point under the mouse remains fixed
+    this.panX = mousePos.x - x * this.scale;
+    this.panY = mousePos.y - y * this.scale;
   }
 
   renderLoop() {
+    // Clear without transform
+    this.ctx.save();
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+    this.ctx.restore();
+
+    // Apply pan/zoom transform
+    this.ctx.save();
+    this.ctx.setTransform(this.scale, 0, 0, this.scale, this.panX, this.panY);
     for (let ent of this.drawing.entities) {
       if (ent instanceof InsertEntity) {
         ent.draw(this.ctx, this.drawing.blocks);
@@ -653,6 +724,7 @@ class CanvasRenderer {
         ent.draw(this.ctx);
       }
     }
+    this.ctx.restore();
     requestAnimationFrame(() => this.renderLoop());
   }
 }
@@ -1009,6 +1081,19 @@ function convertDXFEntityToModel(e) {
   const viewModel = new DrawingViewModel(drawing);
   const canvas = document.getElementById('drawingCanvas');
   const renderer = new CanvasRenderer(canvas, drawing, viewModel);
+
+  document.getElementById('newDrawing').addEventListener('click', ()=>{
+    drawing.entities = [];
+    drawing.blocks = {};
+    // Reset pan/zoom view
+    renderer.panX = 0;
+    renderer.panY = 0;
+    renderer.scale = 1;
+  });
+
+  document.getElementById('panTool').addEventListener('click', ()=>{
+    viewModel.setTool('pan');
+  });
 
   document.getElementById('selectTool').addEventListener('click', ()=>{
     viewModel.setTool('select');
