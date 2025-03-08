@@ -25,6 +25,7 @@
     }
     button {
       margin-right: 4px;
+      font-size: 20px;
     }
     textarea {
       width: 100%;
@@ -67,19 +68,19 @@
 <body>
 
 <div id="toolbar">
-  <button id="newDrawing">New Drawing</button>
-  <button id="panTool">Pan</button>
-  <button id="selectTool">Select</button>
-  <button id="lineTool">Line</button>
-  <button id="rectTool">Rectangle (via Polyline)</button>
-  <button id="circleTool">Circle</button>
-  <button id="textTool">Text</button>
-  <button id="polylineTool">Polyline</button>
-  <button id="createBlock">Create BLOCK from Selection</button>
-  <button id="insertBlock">INSERT Block</button>
-  <button id="editBlock">Edit Block</button>
-  <button id="editEntity">Edit Entity</button>
-  <button id="saveDXF">Save DXF</button>
+  <button id="newDrawing" title="New Drawing">🆕</button>
+  <button id="panTool" title="Pan">✋</button>
+  <button id="selectTool" title="Select">🖱</button>
+  <button id="lineTool" title="Line">📏</button>
+  <button id="rectTool" title="Rectangle (via Polyline)">▭</button>
+  <button id="circleTool" title="Circle">⚪</button>
+  <button id="textTool" title="Text">✏️</button>
+  <button id="polylineTool" title="Polyline">〰️</button>
+  <button id="createBlock" title="Create BLOCK from Selection">📦</button>
+  <button id="insertBlock" title="INSERT Block">➕</button>
+  <button id="editBlock" title="Edit Block">🛠️</button>
+  <button id="editEntity" title="Edit Entity">📝</button>
+  <button id="saveDXF" title="Save DXF">💾</button>
   <input type="file" id="loadDXFFile" accept=".dxf,text/plain" />
 </div>
 
@@ -679,10 +680,16 @@ class CanvasRenderer {
     this.lastX = 0;
     this.lastY = 0;
 
+    // Mouse events
     this.canvas.addEventListener('mousedown', (evt) => this.onMouseDown(evt));
     this.canvas.addEventListener('mousemove', (evt) => this.onMouseMove(evt));
     this.canvas.addEventListener('mouseup', (evt) => this.onMouseUp(evt));
     this.canvas.addEventListener('wheel', (evt) => this.onWheel(evt));
+
+    // Touch events for mobile devices
+    this.canvas.addEventListener('touchstart', (evt) => this.onTouchStart(evt), {passive: false});
+    this.canvas.addEventListener('touchmove', (evt) => this.onTouchMove(evt), {passive: false});
+    this.canvas.addEventListener('touchend', (evt) => this.onTouchEnd(evt), {passive: false});
 
     requestAnimationFrame(() => this.renderLoop());
   }
@@ -692,6 +699,14 @@ class CanvasRenderer {
     return {
       x: evt.clientX - rect.left,
       y: evt.clientY - rect.top
+    };
+  }
+
+  getTouchPos(touch) {
+    const rect = this.canvas.getBoundingClientRect();
+    return {
+      x: touch.clientX - rect.left,
+      y: touch.clientY - rect.top
     };
   }
 
@@ -759,6 +774,57 @@ class CanvasRenderer {
     // Adjust pan so that the drawing point under the mouse remains fixed
     this.panX = mousePos.x - x * this.scale;
     this.panY = mousePos.y - y * this.scale;
+  }
+
+  onTouchStart(evt) {
+    evt.preventDefault();
+    const touch = evt.touches[0];
+    const pos = this.getTouchPos(touch);
+    if (this.viewModel.currentTool === 'pan') {
+      this.isPanning = true;
+      this.panStartX = pos.x;
+      this.panStartY = pos.y;
+      return;
+    }
+    this.isMouseDown = true;
+    this.lastX = pos.x;
+    this.lastY = pos.y;
+    const tx = (pos.x - this.panX) / this.scale;
+    const ty = (pos.y - this.panY) / this.scale;
+    this.viewModel.mouseDown(tx, ty, false);
+  }
+
+  onTouchMove(evt) {
+    evt.preventDefault();
+    const touch = evt.touches[0];
+    const pos = this.getTouchPos(touch);
+    if (this.viewModel.currentTool === 'pan' && this.isPanning) {
+      let dx = pos.x - this.panStartX;
+      let dy = pos.y - this.panStartY;
+      this.panX += dx;
+      this.panY += dy;
+      this.panStartX = pos.x;
+      this.panStartY = pos.y;
+      return;
+    }
+    if (this.isMouseDown) {
+      const tx = (pos.x - this.panX) / this.scale;
+      const ty = (pos.y - this.panY) / this.scale;
+      this.viewModel.mouseMove(tx, ty);
+    }
+  }
+
+  onTouchEnd(evt) {
+    evt.preventDefault();
+    this.isMouseDown = false;
+    const touch = evt.changedTouches[0];
+    if (touch) {
+      const pos = this.getTouchPos(touch);
+      const tx = (pos.x - this.panX) / this.scale;
+      const ty = (pos.y - this.panY) / this.scale;
+      this.viewModel.mouseUp(tx, ty);
+    }
+    this.isPanning = false;
   }
 
   renderLoop() {
