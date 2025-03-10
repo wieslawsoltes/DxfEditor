@@ -233,11 +233,87 @@ class Drawing {
 
 /*
   ===============================
+  ======= QuadTree Class ========
+  ===============================
+*/
+class QuadTree {
+  constructor(boundary, capacity) {
+    // boundary: { x, y, w, h }
+    this.boundary = boundary;
+    this.capacity = capacity;
+    this.entities = [];
+    this.divided = false;
+  }
+  
+  subdivide() {
+    let x = this.boundary.x;
+    let y = this.boundary.y;
+    let w = this.boundary.w / 2;
+    let h = this.boundary.h / 2;
+    this.northeast = new QuadTree({x: x + w, y: y, w: w, h: h}, this.capacity);
+    this.northwest = new QuadTree({x: x, y: y, w: w, h: h}, this.capacity);
+    this.southeast = new QuadTree({x: x + w, y: y + h, w: w, h: h}, this.capacity);
+    this.southwest = new QuadTree({x: x, y: y + h, w: w, h: h}, this.capacity);
+    this.divided = true;
+  }
+  
+  insert(obj) {
+    // obj must have a 'bounds' property: {minX, minY, maxX, maxY}
+    if (!this.intersects(obj.bounds)) {
+      return false;
+    }
+    if (this.entities.length < this.capacity) {
+      this.entities.push(obj);
+      return true;
+    }
+    if (!this.divided) {
+      this.subdivide();
+    }
+    if (this.northeast.insert(obj)) return true;
+    if (this.northwest.insert(obj)) return true;
+    if (this.southeast.insert(obj)) return true;
+    if (this.southwest.insert(obj)) return true;
+    return false;
+  }
+  
+  intersects(rect) {
+    // rect: {minX, minY, maxX, maxY}
+    let b = this.boundary;
+    if (rect.maxX < b.x || rect.minX > b.x + b.w || rect.maxY < b.y || rect.minY > b.y + b.h) {
+      return false;
+    }
+    return true;
+  }
+  
+  queryPoint(x, y, found) {
+    if (!found) found = [];
+    if (x < this.boundary.x || x > this.boundary.x + this.boundary.w ||
+        y < this.boundary.y || y > this.boundary.y + this.boundary.h) {
+      return found;
+    }
+    for (let obj of this.entities) {
+      if (x >= obj.bounds.minX && x <= obj.bounds.maxX &&
+          y >= obj.bounds.minY && y <= obj.bounds.maxY) {
+        found.push(obj.entity);
+      }
+    }
+    if (this.divided) {
+      this.northwest.queryPoint(x, y, found);
+      this.northeast.queryPoint(x, y, found);
+      this.southwest.queryPoint(x, y, found);
+      this.southeast.queryPoint(x, y, found);
+    }
+    return found;
+  }
+}
+
+/*
+  ===============================
   ======== Bounds Service =======
   ===============================
 */
 class BoundsService {
-  static getEntityBounds(e) {
+  static getEntityBounds(e, blocks = {}) {
     if (e instanceof LineEntity) {
       return {
         minX: Math.min(e.x1, e.x2),
@@ -262,6 +338,7 @@ class BoundsService {
         maxY: e.cy + e.r
       };
     } else if (e instanceof TextEntity) {
+      // Estimate text bounds using fixed values
       return {
         minX: e.x,
         minY: e.y - 16,
@@ -269,12 +346,19 @@ class BoundsService {
         maxY: e.y
       };
     } else if (e instanceof InsertEntity) {
-      return {
-        minX: e.x,
-        minY: e.y,
-        maxX: e.x,
-        maxY: e.y
-      };
+      let block = blocks[e.blockName];
+      if (block && block.entities.length > 0) {
+         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+         block.entities.forEach(child => {
+           let b = BoundsService.getEntityBounds(child, blocks);
+           minX = Math.min(minX, b.minX);
+           minY = Math.min(minY, b.minY);
+           maxX = Math.max(maxX, b.maxX);
+           maxY = Math.max(maxY, b.maxY);
+         });
+         return { minX: minX + e.x, minY: minY + e.y, maxX: maxX + e.x, maxY: maxY + e.y };
+      }
+      return { minX: e.x, minY: e.y, maxX: e.x, maxY: e.y };
     }
     return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   }
@@ -351,7 +435,7 @@ class HitTestingService {
     if (block && block.entities.length > 0) {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       block.entities.forEach(e => {
-          const b = BoundsService.getEntityBounds(e);
+          const b = BoundsService.getEntityBounds(e, blocks);
           minX = Math.min(minX, b.minX);
           minY = Math.min(minY, b.minY);
           maxX = Math.max(maxX, b.maxX);
@@ -396,9 +480,7 @@ function cloneEntity(entity) {
   ========== Resize Service ==========
   ===============================
 */
-// New standalone service class for all resizing logic
 class ResizeService {
-  // Returns an array of handle objects for a given bounding box.
   static getSelectionHandles(bounds) {
     const midX = (bounds.minX + bounds.maxX) / 2;
     const midY = (bounds.minY + bounds.maxY) / 2;
@@ -414,8 +496,6 @@ class ResizeService {
     ];
   }
 
-  // Given the original bounds, a resize handle, and the new point (x, y),
-  // calculate the new bounding box.
   static calculateNewBounds(origBounds, handle, x, y) {
     let newBounds = Object.assign({}, origBounds);
     switch (handle) {
@@ -431,8 +511,6 @@ class ResizeService {
     return newBounds;
   }
 
-  // Updates the current entity's geometry based on the original entity, the original bounding box,
-  // and the new bounding box (which defines the scale factors).
   static updateEntityFromResize(original, current, origBounds, newBounds) {
     const origWidth = origBounds.maxX - origBounds.minX;
     const origHeight = origBounds.maxY - origBounds.minY;
@@ -558,15 +636,39 @@ class DrawingViewModel {
   }
 
   findHitEntity(x, y) {
-    for (let i = this.drawing.entities.length - 1; i >= 0; i--) {
-      const ent = this.drawing.entities[i];
-      let hit = false;
-      if (ent instanceof InsertEntity) {
-        hit = HitTestingService.isInsertHit(ent, x, y, this.drawing.blocks);
-      } else {
-        hit = ent.isHit(x, y);
+    // Build a quadtree from current entities using improved bounds.
+    const drawingEntities = this.drawing.entities;
+    let globalBounds = {minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity};
+    drawingEntities.forEach(ent => {
+      const b = BoundsService.getEntityBounds(ent, this.drawing.blocks);
+      globalBounds.minX = Math.min(globalBounds.minX, b.minX);
+      globalBounds.minY = Math.min(globalBounds.minY, b.minY);
+      globalBounds.maxX = Math.max(globalBounds.maxX, b.maxX);
+      globalBounds.maxY = Math.max(globalBounds.maxY, b.maxY);
+    });
+    if (globalBounds.minX === Infinity) {
+      globalBounds = {minX: 0, minY: 0, maxX: 800, maxY: 600};
+    }
+    const boundary = { x: globalBounds.minX, y: globalBounds.minY, w: globalBounds.maxX - globalBounds.minX, h: globalBounds.maxY - globalBounds.minY };
+    const qt = new QuadTree(boundary, 4);
+    drawingEntities.forEach(ent => {
+      const b = BoundsService.getEntityBounds(ent, this.drawing.blocks);
+      qt.insert({ entity: ent, bounds: b });
+    });
+    // Query candidates at the click point.
+    const candidates = qt.queryPoint(x, y);
+    // Check candidates in reverse drawing order.
+    for (let i = drawingEntities.length - 1; i >= 0; i--) {
+      let ent = drawingEntities[i];
+      if (candidates.indexOf(ent) !== -1) {
+        let hit = false;
+        if (ent instanceof InsertEntity) {
+          hit = HitTestingService.isInsertHit(ent, x, y, this.drawing.blocks);
+        } else {
+          hit = ent.isHit(x, y);
+        }
+        if (hit) return ent;
       }
-      if (hit) return ent;
     }
     return null;
   }
@@ -602,7 +704,7 @@ class DrawingViewModel {
     if (selectedEntities.length === 0) return;
     let globalBounds = null;
     selectedEntities.forEach(e => {
-      const b = BoundsService.getEntityBounds(e);
+      const b = BoundsService.getEntityBounds(e, this.drawing.blocks);
       if (!globalBounds) {
         globalBounds = { minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY };
       } else {
@@ -630,7 +732,6 @@ class DrawingViewModel {
   ======= Tools Service =========
   ===============================
 */
-// Common base class for all tools
 class BaseTool {
   constructor(viewModel) {
     this.viewModel = viewModel;
@@ -640,7 +741,6 @@ class BaseTool {
   mouseUp(x, y, evt) {}
 }
 
-// SELECT tool
 class SelectTool extends BaseTool {
   mouseDown(x, y, evt) {
     const shiftKey = evt.shiftKey;
@@ -675,7 +775,6 @@ class SelectTool extends BaseTool {
   }
 }
 
-// LINE tool
 class LineTool extends BaseTool {
   mouseDown(x, y, evt) {
     this.viewModel.tempEntity = new LineEntity(x, y, x, y);
@@ -694,7 +793,6 @@ class LineTool extends BaseTool {
   }
 }
 
-// RECTANGLE tool (implemented as a closed polyline)
 class RectTool extends BaseTool {
   mouseDown(x, y, evt) {
     this.viewModel.tempEntity = new PolylineEntity([
@@ -722,7 +820,6 @@ class RectTool extends BaseTool {
   }
 }
 
-// CIRCLE tool
 class CircleTool extends BaseTool {
   mouseDown(x, y, evt) {
     this.viewModel.tempEntity = new CircleEntity(x, y, 0);
@@ -742,7 +839,6 @@ class CircleTool extends BaseTool {
   }
 }
 
-// TEXT tool
 class TextTool extends BaseTool {
   mouseDown(x, y, evt) {
     const text = prompt("Enter text:", "Hello");
@@ -753,7 +849,6 @@ class TextTool extends BaseTool {
   }
 }
 
-// POLYLINE tool
 class PolylineTool extends BaseTool {
   mouseDown(x, y, evt) {
     if (!this.viewModel.tempEntity) {
@@ -779,11 +874,10 @@ class PolylineTool extends BaseTool {
     }
   }
   mouseUp(x, y, evt) {
-    // No action on mouseUp for polyline
+    // No action needed on mouseUp for polyline
   }
 }
 
-// INSERT BLOCK tool
 class InsertBlockTool extends BaseTool {
   mouseDown(x, y, evt) {
     if (this.viewModel.blockToInsert) {
@@ -793,7 +887,6 @@ class InsertBlockTool extends BaseTool {
   }
 }
 
-// ToolsService – delegates mouse events to the current tool.
 class ToolsService {
   constructor(viewModel) {
     this.viewModel = viewModel;
@@ -806,7 +899,6 @@ class ToolsService {
       polyline: new PolylineTool(viewModel),
       insertBlock: new InsertBlockTool(viewModel)
     };
-    // The 'pan' tool is handled separately in CanvasRenderer.
     this.currentToolName = 'select';
     this.currentTool = this.tools[this.currentToolName];
   }
@@ -897,11 +989,11 @@ class CanvasRenderer {
     
     // FIRST: Check if a resize handle was clicked on any selected entity.
     const HANDLE_SCREEN_SIZE = 8; // in pixels
-    const handleSize = HANDLE_SCREEN_SIZE / this.scale; // size in drawing coordinates
+    const handleSize = HANDLE_SCREEN_SIZE / this.scale; // in drawing coordinates
     let handleClicked = false;
     for (let ent of this.drawing.entities) {
       if (ent.selected) {
-        const bounds = BoundsService.getEntityBounds(ent);
+        const bounds = BoundsService.getEntityBounds(ent, this.viewModel.drawing.blocks);
         const handles = ResizeService.getSelectionHandles(bounds);
         for (let h of handles) {
           if (tx >= h.x - handleSize/2 && tx <= h.x + handleSize/2 &&
@@ -910,7 +1002,6 @@ class CanvasRenderer {
             this.viewModel.resizing = true;
             this.viewModel.resizingEntity = ent;
             this.viewModel.resizeHandle = h.id;
-            // Clone the entity so we have its original state
             this.viewModel.resizeOriginalEntity = cloneEntity(ent);
             this.viewModel.resizeOriginalBounds = bounds;
             handleClicked = true;
@@ -920,7 +1011,7 @@ class CanvasRenderer {
       }
       if (handleClicked) break;
     }
-    if (handleClicked) return; // skip normal tool handling if resizing
+    if (handleClicked) return;
 
     if (this.toolsService.currentToolName === 'pan') {
       this.isPanning = true;
@@ -941,7 +1032,6 @@ class CanvasRenderer {
     const tx = (pos.x - this.panX) / this.scale;
     const ty = (pos.y - this.panY) / this.scale;
     
-    // If in resizing mode, delegate to ResizeService.
     if (this.viewModel.resizing) {
       const origBounds = this.viewModel.resizeOriginalBounds;
       const newBounds = ResizeService.calculateNewBounds(origBounds, this.viewModel.resizeHandle, tx, ty);
@@ -1076,7 +1166,7 @@ class CanvasRenderer {
     const handleSize = HANDLE_SCREEN_SIZE / this.scale;
     for (let ent of this.drawing.entities) {
       if (ent.selected) {
-        const bounds = BoundsService.getEntityBounds(ent);
+        const bounds = BoundsService.getEntityBounds(ent, this.viewModel.drawing.blocks);
         const handles = ResizeService.getSelectionHandles(bounds);
         this.ctx.save();
         this.ctx.strokeStyle = 'blue';
