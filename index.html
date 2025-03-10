@@ -951,339 +951,341 @@ class CanvasRenderer {
   ===============================
 */
 
-function exportDXF(drawing) {
-  let dxf = [];
-  dxf.push("0");
-  dxf.push("SECTION");
-  dxf.push("2");
-  dxf.push("HEADER");
-  dxf.push("9");
-  dxf.push("$ACADVER");
-  dxf.push("1");
-  dxf.push("AC1009");
-  dxf.push("0");
-  dxf.push("ENDSEC");
-
-  dxf.push("0");
-  dxf.push("SECTION");
-  dxf.push("2");
-  dxf.push("BLOCKS");
-  for (let blockName in drawing.blocks) {
-    const block = drawing.blocks[blockName];
+class DxfService {
+  static exportDXF(drawing) {
+    let dxf = [];
     dxf.push("0");
-    dxf.push("BLOCK");
+    dxf.push("SECTION");
     dxf.push("2");
-    dxf.push(blockName);
-    dxf.push("70");
+    dxf.push("HEADER");
+    dxf.push("9");
+    dxf.push("$ACADVER");
+    dxf.push("1");
+    dxf.push("AC1009");
     dxf.push("0");
-    dxf.push("10");
+    dxf.push("ENDSEC");
+
     dxf.push("0");
-    dxf.push("20");
-    dxf.push("0");
-    for (let e of block.entities) {
-      dxf.push(...entityToDXF(e));
+    dxf.push("SECTION");
+    dxf.push("2");
+    dxf.push("BLOCKS");
+    for (let blockName in drawing.blocks) {
+      const block = drawing.blocks[blockName];
+      dxf.push("0");
+      dxf.push("BLOCK");
+      dxf.push("2");
+      dxf.push(blockName);
+      dxf.push("70");
+      dxf.push("0");
+      dxf.push("10");
+      dxf.push("0");
+      dxf.push("20");
+      dxf.push("0");
+      for (let e of block.entities) {
+        dxf.push(...this.entityToDXF(e));
+      }
+      dxf.push("0");
+      dxf.push("ENDBLK");
     }
     dxf.push("0");
-    dxf.push("ENDBLK");
+    dxf.push("ENDSEC");
+
+    dxf.push("0");
+    dxf.push("SECTION");
+    dxf.push("2");
+    dxf.push("ENTITIES");
+    for (let e of drawing.entities) {
+      dxf.push(...this.entityToDXF(e));
+    }
+    dxf.push("0");
+    dxf.push("ENDSEC");
+    dxf.push("0");
+    dxf.push("EOF");
+
+    return dxf.join("\n");
   }
-  dxf.push("0");
-  dxf.push("ENDSEC");
 
-  dxf.push("0");
-  dxf.push("SECTION");
-  dxf.push("2");
-  dxf.push("ENTITIES");
-  for (let e of drawing.entities) {
-    dxf.push(...entityToDXF(e));
-  }
-  dxf.push("0");
-  dxf.push("ENDSEC");
-  dxf.push("0");
-  dxf.push("EOF");
-
-  return dxf.join("\n");
-}
-
-function entityToDXF(ent) {
-  let result = [];
-  if (ent instanceof LineEntity) {
-    result.push("0");
-    result.push("LINE");
-    result.push("8");
-    result.push("0");
-    result.push("10");
-    result.push(ent.x1);
-    result.push("20");
-    result.push(ent.y1);
-    result.push("11");
-    result.push(ent.x2);
-    result.push("21");
-    result.push(ent.y2);
-  } else if (ent instanceof CircleEntity) {
-    result.push("0");
-    result.push("CIRCLE");
-    result.push("8");
-    result.push("0");
-    result.push("10");
-    result.push(ent.cx);
-    result.push("20");
-    result.push(ent.cy);
-    result.push("40");
-    result.push(ent.r);
-  } else if (ent instanceof PolylineEntity) {
-    result.push("0");
-    result.push("POLYLINE");
-    result.push("8");
-    result.push("0");
-    result.push("66");
-    result.push("1");
-    result.push("70");
-    result.push(ent.closed ? "1" : "0");
-    for (let v of ent.vertices) {
+  static entityToDXF(ent) {
+    let result = [];
+    if (ent instanceof LineEntity) {
       result.push("0");
-      result.push("VERTEX");
+      result.push("LINE");
       result.push("8");
       result.push("0");
       result.push("10");
-      result.push(v.x);
+      result.push(ent.x1);
       result.push("20");
-      result.push(v.y);
+      result.push(ent.y1);
+      result.push("11");
+      result.push(ent.x2);
+      result.push("21");
+      result.push(ent.y2);
+    } else if (ent instanceof CircleEntity) {
+      result.push("0");
+      result.push("CIRCLE");
+      result.push("8");
+      result.push("0");
+      result.push("10");
+      result.push(ent.cx);
+      result.push("20");
+      result.push(ent.cy);
+      result.push("40");
+      result.push(ent.r);
+    } else if (ent instanceof PolylineEntity) {
+      result.push("0");
+      result.push("POLYLINE");
+      result.push("8");
+      result.push("0");
+      result.push("66");
+      result.push("1");
+      result.push("70");
+      result.push(ent.closed ? "1" : "0");
+      for (let v of ent.vertices) {
+        result.push("0");
+        result.push("VERTEX");
+        result.push("8");
+        result.push("0");
+        result.push("10");
+        result.push(v.x);
+        result.push("20");
+        result.push(v.y);
+      }
+      result.push("0");
+      result.push("SEQEND");
+    } else if (ent instanceof TextEntity) {
+      result.push("0");
+      result.push("TEXT");
+      result.push("8");
+      result.push("0");
+      result.push("10");
+      result.push(ent.x);
+      result.push("20");
+      result.push(ent.y);
+      result.push("1");
+      result.push(ent.text);
+      result.push("40");
+      result.push("16");
+    } else if (ent instanceof InsertEntity) {
+      result.push("0");
+      result.push("INSERT");
+      result.push("8");
+      result.push("0");
+      result.push("2");
+      result.push(ent.blockName);
+      result.push("10");
+      result.push(ent.x);
+      result.push("20");
+      result.push(ent.y);
     }
-    result.push("0");
-    result.push("SEQEND");
-  } else if (ent instanceof TextEntity) {
-    result.push("0");
-    result.push("TEXT");
-    result.push("8");
-    result.push("0");
-    result.push("10");
-    result.push(ent.x);
-    result.push("20");
-    result.push(ent.y);
-    result.push("1");
-    result.push(ent.text);
-    result.push("40");
-    result.push("16");
-  } else if (ent instanceof InsertEntity) {
-    result.push("0");
-    result.push("INSERT");
-    result.push("8");
-    result.push("0");
-    result.push("2");
-    result.push(ent.blockName);
-    result.push("10");
-    result.push(ent.x);
-    result.push("20");
-    result.push(ent.y);
+    return result;
   }
-  return result;
-}
 
-function importDXF(dxfString, drawing) {
-  drawing.entities = [];
-  drawing.blocks = {};
-  const lines = dxfString.split(/\r?\n/).map(l => l.trim()).filter(l => l !== "");
-  const pairs = [];
-  for (let i = 0; i < lines.length; i += 2) {
-    const code = lines[i];
-    const value = lines[i + 1] || "";
-    pairs.push({ code, value });
-  }
-  let index = 0;
-  function nextPair() {
-    return pairs[index++] || { code: null, value: null };
-  }
-  function peekPair() {
-    return pairs[index] || { code: null, value: null };
-  }
-  function skipToNextEntity() {
-    while (index < pairs.length && peekPair().code !== "0") {
-      index++;
+  static importDXF(dxfString, drawing) {
+    drawing.entities = [];
+    drawing.blocks = {};
+    const lines = dxfString.split(/\r?\n/).map(l => l.trim()).filter(l => l !== "");
+    const pairs = [];
+    for (let i = 0; i < lines.length; i += 2) {
+      const code = lines[i];
+      const value = lines[i + 1] || "";
+      pairs.push({ code, value });
     }
-  }
-  function skipSection() {
-    while (index < pairs.length) {
-      let p = peekPair();
-      if (p.code === "0" && (p.value === "ENDSEC" || p.value === "EOF")) {
-        nextPair();
-        break;
-      }
-      index++;
+    let index = 0;
+    function nextPair() {
+      return pairs[index++] || { code: null, value: null };
     }
-  }
-  function parseEntitiesInto(arrayRef) {
-    while (index < pairs.length) {
-      let pair = peekPair();
-      if (pair.code === "0") {
-        if (pair.value === "ENDSEC" || pair.value === "EOF") break;
-        if (["LINE", "CIRCLE", "TEXT", "INSERT", "POLYLINE"].includes(pair.value)) {
-          const entityData = parseOneEntity();
-          const e = convertDXFEntityToModel(entityData);
-          if (e) arrayRef.push(e);
-        } else {
-          nextPair();
-          skipToNextEntity();
-        }
-      } else {
-        nextPair();
+    function peekPair() {
+      return pairs[index] || { code: null, value: null };
+    }
+    function skipToNextEntity() {
+      while (index < pairs.length && peekPair().code !== "0") {
+        index++;
       }
     }
-  }
-  function parseBlocks() {
-    while (index < pairs.length) {
-      let pair = peekPair();
-      if (pair.code === "0") {
-        if (pair.value === "ENDSEC" || pair.value === "EOF") break;
-        if (pair.value === "BLOCK") {
-          parseOneBlock();
-        } else {
-          nextPair();
-        }
-      } else {
-        nextPair();
-      }
-    }
-  }
-  function parseOneBlock() {
-    nextPair();
-    let blockName = "UnnamedBlock";
-    const blockEntities = [];
-    while (index < pairs.length) {
-      let p = peekPair();
-      if (p.code === "0") {
-        if (p.value === "ENDBLK" || p.value === "EOF") {
+    function skipSection() {
+      while (index < pairs.length) {
+        let p = peekPair();
+        if (p.code === "0" && (p.value === "ENDSEC" || p.value === "EOF")) {
           nextPair();
           break;
         }
-        if (["LINE", "CIRCLE", "TEXT", "INSERT", "POLYLINE"].includes(p.value)) {
-          const entityData = parseOneEntity();
-          blockEntities.push(entityData);
+        index++;
+      }
+    }
+    function parseEntitiesInto(arrayRef) {
+      while (index < pairs.length) {
+        let pair = peekPair();
+        if (pair.code === "0") {
+          if (pair.value === "ENDSEC" || pair.value === "EOF") break;
+          if (["LINE", "CIRCLE", "TEXT", "INSERT", "POLYLINE"].includes(pair.value)) {
+            const entityData = parseOneEntity();
+            const e = DxfService.convertDXFEntityToModel(entityData);
+            if (e) arrayRef.push(e);
+          } else {
+            nextPair();
+            skipToNextEntity();
+          }
         } else {
           nextPair();
-          skipToNextEntity();
-        }
-      } else {
-        let current = nextPair();
-        if (current.code === "2") {
-          blockName = current.value;
         }
       }
     }
-    const realEntities = blockEntities
-      .map(e => convertDXFEntityToModel(e))
-      .filter(e => e !== null);
-    drawing.blocks[blockName] = new Block(blockName, realEntities);
-  }
-  function parseVertex() {
-    let vertexType = nextPair();
-    let x = 0, y = 0;
-    while (index < pairs.length) {
-      let p = peekPair();
-      if (p.code === "0") break;
-      p = nextPair();
-      if (p.code === "10") x = parseFloat(p.value);
-      else if (p.code === "20") y = parseFloat(p.value);
-    }
-    return { x, y };
-  }
-  function parseOneEntity() {
-    let first = nextPair();
-    let type = first.value;
-    if (type === "POLYLINE") {
-      let vertices = [];
-      let closed = false;
+    function parseBlocks() {
       while (index < pairs.length) {
-        let next = peekPair();
-        if (next.code === "0") {
-          if (next.value === "VERTEX") {
-            let vertexData = parseVertex();
-            vertices.push(vertexData);
-          } else if (next.value === "SEQEND") {
-            nextPair();
-            break;
+        let pair = peekPair();
+        if (pair.code === "0") {
+          if (pair.value === "ENDSEC" || pair.value === "EOF") break;
+          if (pair.value === "BLOCK") {
+            parseOneBlock();
           } else {
-            break;
+            nextPair();
           }
         } else {
-          let headerPair = nextPair();
-          if (headerPair.code === "70") {
-            closed = parseInt(headerPair.value) === 1;
+          nextPair();
+        }
+      }
+    }
+    function parseOneBlock() {
+      nextPair();
+      let blockName = "UnnamedBlock";
+      const blockEntities = [];
+      while (index < pairs.length) {
+        let p = peekPair();
+        if (p.code === "0") {
+          if (p.value === "ENDBLK" || p.value === "EOF") {
+            nextPair();
+            break;
+          }
+          if (["LINE", "CIRCLE", "TEXT", "INSERT", "POLYLINE"].includes(p.value)) {
+            const entityData = parseOneEntity();
+            blockEntities.push(entityData);
+          } else {
+            nextPair();
+            skipToNextEntity();
+          }
+        } else {
+          let current = nextPair();
+          if (current.code === "2") {
+            blockName = current.value;
           }
         }
       }
-      return { type: "POLYLINE", vertices: vertices, closed: closed };
-    } else {
-      const data = { type };
+      const realEntities = blockEntities
+        .map(e => DxfService.convertDXFEntityToModel(e))
+        .filter(e => e !== null);
+      drawing.blocks[blockName] = new Block(blockName, realEntities);
+    }
+    function parseVertex() {
+      let vertexType = nextPair();
+      let x = 0, y = 0;
       while (index < pairs.length) {
         let p = peekPair();
         if (p.code === "0") break;
         p = nextPair();
-        const gc = p.code;
-        const gv = p.value;
-        switch (type) {
-          case "LINE":
-            if (gc === "10") data.x1 = parseFloat(gv);
-            else if (gc === "20") data.y1 = parseFloat(gv);
-            else if (gc === "11") data.x2 = parseFloat(gv);
-            else if (gc === "21") data.y2 = parseFloat(gv);
-            break;
-          case "CIRCLE":
-            if (gc === "10") data.cx = parseFloat(gv);
-            else if (gc === "20") data.cy = parseFloat(gv);
-            else if (gc === "40") data.r = parseFloat(gv);
-            break;
-          case "TEXT":
-            if (gc === "10") data.x = parseFloat(gv);
-            else if (gc === "20") data.y = parseFloat(gv);
-            else if (gc === "1") data.text = gv;
-            break;
-          case "INSERT":
-            if (gc === "2") data.blockName = gv;
-            else if (gc === "10") data.x = parseFloat(gv);
-            else if (gc === "20") data.y = parseFloat(gv);
-            break;
-        }
+        if (p.code === "10") x = parseFloat(p.value);
+        else if (p.code === "20") y = parseFloat(p.value);
       }
-      return data;
+      return { x, y };
+    }
+    function parseOneEntity() {
+      let first = nextPair();
+      let type = first.value;
+      if (type === "POLYLINE") {
+        let vertices = [];
+        let closed = false;
+        while (index < pairs.length) {
+          let next = peekPair();
+          if (next.code === "0") {
+            if (next.value === "VERTEX") {
+              let vertexData = parseVertex();
+              vertices.push(vertexData);
+            } else if (next.value === "SEQEND") {
+              nextPair();
+              break;
+            } else {
+              break;
+            }
+          } else {
+            let headerPair = nextPair();
+            if (headerPair.code === "70") {
+              closed = parseInt(headerPair.value) === 1;
+            }
+          }
+        }
+        return { type: "POLYLINE", vertices: vertices, closed: closed };
+      } else {
+        const data = { type };
+        while (index < pairs.length) {
+          let p = peekPair();
+          if (p.code === "0") break;
+          p = nextPair();
+          const gc = p.code;
+          const gv = p.value;
+          switch (type) {
+            case "LINE":
+              if (gc === "10") data.x1 = parseFloat(gv);
+              else if (gc === "20") data.y1 = parseFloat(gv);
+              else if (gc === "11") data.x2 = parseFloat(gv);
+              else if (gc === "21") data.y2 = parseFloat(gv);
+              break;
+            case "CIRCLE":
+              if (gc === "10") data.cx = parseFloat(gv);
+              else if (gc === "20") data.cy = parseFloat(gv);
+              else if (gc === "40") data.r = parseFloat(gv);
+              break;
+            case "TEXT":
+              if (gc === "10") data.x = parseFloat(gv);
+              else if (gc === "20") data.y = parseFloat(gv);
+              else if (gc === "1") data.text = gv;
+              break;
+            case "INSERT":
+              if (gc === "2") data.blockName = gv;
+              else if (gc === "10") data.x = parseFloat(gv);
+              else if (gc === "20") data.y = parseFloat(gv);
+              break;
+          }
+        }
+        return data;
+      }
+    }
+    while (index < pairs.length) {
+      let pair = nextPair();
+      if (pair.code === "0" && pair.value === "SECTION") {
+        let secPair = nextPair();
+        if (secPair.code === "2") {
+          let sectionName = secPair.value.toUpperCase();
+          if (sectionName === "HEADER") {
+            skipSection();
+          } else if (sectionName === "BLOCKS") {
+            parseBlocks();
+            skipSection();
+          } else if (sectionName === "ENTITIES") {
+            parseEntitiesInto(drawing.entities);
+            skipSection();
+          } else {
+            skipSection();
+          }
+        }
+      } else if (pair.code === "0" && pair.value === "EOF") {
+        break;
+      }
     }
   }
-  while (index < pairs.length) {
-    let pair = nextPair();
-    if (pair.code === "0" && pair.value === "SECTION") {
-      let secPair = nextPair();
-      if (secPair.code === "2") {
-        let sectionName = secPair.value.toUpperCase();
-        if (sectionName === "HEADER") {
-          skipSection();
-        } else if (sectionName === "BLOCKS") {
-          parseBlocks();
-          skipSection();
-        } else if (sectionName === "ENTITIES") {
-          parseEntitiesInto(drawing.entities);
-          skipSection();
-        } else {
-          skipSection();
-        }
-      }
-    } else if (pair.code === "0" && pair.value === "EOF") {
-      break;
-    }
-  }
-}
 
-function convertDXFEntityToModel(e) {
-  if (e.type === 'LINE') {
-    return new LineEntity(e.x1||0, e.y1||0, e.x2||0, e.y2||0);
-  } else if (e.type === 'CIRCLE') {
-    return new CircleEntity(e.cx||0, e.cy||0, e.r||0);
-  } else if (e.type === 'TEXT') {
-    return new TextEntity(e.x||0, e.y||0, e.text||"");
-  } else if (e.type === 'INSERT') {
-    return new InsertEntity(e.blockName||"?", e.x||0, e.y||0);
-  } else if (e.type === 'POLYLINE') {
-    return new PolylineEntity(e.vertices, e.closed);
+  static convertDXFEntityToModel(e) {
+    if (e.type === 'LINE') {
+      return new LineEntity(e.x1 || 0, e.y1 || 0, e.x2 || 0, e.y2 || 0);
+    } else if (e.type === 'CIRCLE') {
+      return new CircleEntity(e.cx || 0, e.cy || 0, e.r || 0);
+    } else if (e.type === 'TEXT') {
+      return new TextEntity(e.x || 0, e.y || 0, e.text || "");
+    } else if (e.type === 'INSERT') {
+      return new InsertEntity(e.blockName || "?", e.x || 0, e.y || 0);
+    } else if (e.type === 'POLYLINE') {
+      return new PolylineEntity(e.vertices, e.closed);
+    }
+    return null;
   }
-  return null;
 }
 
 /*
@@ -1473,7 +1475,7 @@ document.getElementById('insertBlock').addEventListener('click', () => {
 });
 
 document.getElementById('saveDXF').addEventListener('click', () => {
-  const dxfStr = exportDXF(drawing);
+  const dxfStr = DxfService.exportDXF(drawing);
   document.getElementById('dxfOutput').value = dxfStr;
   const blob = new Blob([dxfStr], {type: 'text/plain'});
   const url = URL.createObjectURL(blob);
@@ -1490,7 +1492,7 @@ document.getElementById('loadDXFFile').addEventListener('change', (evt) => {
   const reader = new FileReader();
   reader.onload = function(e) {
     const contents = e.target.result;
-    importDXF(contents, drawing);
+    DxfService.importDXF(contents, drawing);
   };
   reader.readAsText(file);
 });
