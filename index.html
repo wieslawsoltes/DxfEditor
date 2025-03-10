@@ -214,9 +214,8 @@ class InsertEntity extends Entity {
     this.y = y;
   }
   isHit(px, py) {
-    const dx = px - this.x;
-    const dy = py - this.y;
-    return Math.sqrt(dx*dx + dy*dy) < 10;
+    // Hit testing for INSERT now uses bounds from BoundsService.
+    return HitTestingService.isInsertHit(this, px, py, drawing.blocks);
   }
   move(dx, dy) {
     this.x += dx;
@@ -231,6 +230,55 @@ class Drawing {
   constructor() {
     this.entities = [];
     this.blocks = {}; // { blockName: Block, ... }
+  }
+}
+
+/*
+  ===============================
+  ======== Bounds Service =======
+  ===============================
+*/
+class BoundsService {
+  static getEntityBounds(e) {
+    if (e instanceof LineEntity) {
+      return {
+        minX: Math.min(e.x1, e.x2),
+        minY: Math.min(e.y1, e.y2),
+        maxX: Math.max(e.x1, e.x2),
+        maxY: Math.max(e.y1, e.y2)
+      };
+    } else if (e instanceof PolylineEntity) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      e.vertices.forEach(v => {
+        minX = Math.min(minX, v.x);
+        minY = Math.min(minY, v.y);
+        maxX = Math.max(maxX, v.x);
+        maxY = Math.max(maxY, v.y);
+      });
+      return { minX, minY, maxX, maxY };
+    } else if (e instanceof CircleEntity) {
+      return {
+        minX: e.cx - e.r,
+        minY: e.cy - e.r,
+        maxX: e.cx + e.r,
+        maxY: e.cy + e.r
+      };
+    } else if (e instanceof TextEntity) {
+      return {
+        minX: e.x,
+        minY: e.y - 16,
+        maxX: e.x + 50,
+        maxY: e.y
+      };
+    } else if (e instanceof InsertEntity) {
+      return {
+        minX: e.x,
+        minY: e.y,
+        maxX: e.x,
+        maxY: e.y
+      };
+    }
+    return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   }
 }
 
@@ -300,12 +348,12 @@ class HitTestingService {
             y <= entity.y && y >= entity.y - height);
   }
 
-  static isInsertHit(entity, x, y, blocks, getEntityBoundsCallback) {
+  static isInsertHit(entity, x, y, blocks) {
     const block = blocks[entity.blockName];
     if (block && block.entities.length > 0) {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       block.entities.forEach(e => {
-          const b = getEntityBoundsCallback(e);
+          const b = BoundsService.getEntityBounds(e);
           minX = Math.min(minX, b.minX);
           minY = Math.min(minY, b.minY);
           maxX = Math.max(maxX, b.maxX);
@@ -546,7 +594,7 @@ class DrawingViewModel {
       const ent = this.drawing.entities[i];
       let hit = false;
       if (ent instanceof InsertEntity) {
-        hit = HitTestingService.isInsertHit(ent, x, y, this.drawing.blocks, this.getEntityBounds.bind(this));
+        hit = HitTestingService.isInsertHit(ent, x, y, this.drawing.blocks);
       } else {
         hit = ent.isHit(x, y);
       }
@@ -584,25 +632,21 @@ class DrawingViewModel {
   createBlockFromSelection(blockName) {
     const selectedEntities = this.drawing.entities.filter(e => e.selected);
     if (selectedEntities.length === 0) return;
-    let minX = Infinity, minY = Infinity;
+    let globalBounds = null;
     selectedEntities.forEach(e => {
-      if (e instanceof LineEntity) {
-        minX = Math.min(minX, e.x1, e.x2);
-        minY = Math.min(minY, e.y1, e.y2);
-      } else if (e instanceof PolylineEntity) {
-        e.vertices.forEach(v => {
-          minX = Math.min(minX, v.x);
-          minY = Math.min(minY, v.y);
-        });
-      } else if (e instanceof CircleEntity) {
-        minX = Math.min(minX, e.cx - e.r);
-        minY = Math.min(minY, e.cy - e.r);
-      } else if (e instanceof TextEntity) {
-        minX = Math.min(minX, e.x);
-        minY = Math.min(minY, e.y);
+      const b = BoundsService.getEntityBounds(e);
+      if (!globalBounds) {
+        globalBounds = { minX: b.minX, minY: b.minY, maxX: b.maxX, maxY: b.maxY };
+      } else {
+        globalBounds.minX = Math.min(globalBounds.minX, b.minX);
+        globalBounds.minY = Math.min(globalBounds.minY, b.minY);
+        globalBounds.maxX = Math.max(globalBounds.maxX, b.maxX);
+        globalBounds.maxY = Math.max(globalBounds.maxY, b.maxY);
       }
     });
-    const offsetEntities = selectedEntities.map(e => this.offsetEntity(e, minX, minY))
+    const offsetX = globalBounds.minX;
+    const offsetY = globalBounds.minY;
+    const offsetEntities = selectedEntities.map(e => this.offsetEntity(e, offsetX, offsetY))
                                             .filter(e => e !== null);
     this.drawing.blocks[blockName] = new Block(blockName, offsetEntities);
     selectedEntities.forEach(ent => { ent.selected = false; });
@@ -611,48 +655,6 @@ class DrawingViewModel {
   setBlockToInsert(blockName) {
     this.currentTool = 'insertBlock';
     this.blockToInsert = blockName;
-  }
-
-  getEntityBounds(e) {
-    if (e instanceof LineEntity) {
-      return {
-        minX: Math.min(e.x1, e.x2),
-        minY: Math.min(e.y1, e.y2),
-        maxX: Math.max(e.x1, e.x2),
-        maxY: Math.max(e.y1, e.y2)
-      };
-    } else if (e instanceof PolylineEntity) {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      e.vertices.forEach(v => {
-        minX = Math.min(minX, v.x);
-        minY = Math.min(minY, v.y);
-        maxX = Math.max(maxX, v.x);
-        maxY = Math.max(maxY, v.y);
-      });
-      return { minX, minY, maxX, maxY };
-    } else if (e instanceof CircleEntity) {
-      return {
-        minX: e.cx - e.r,
-        minY: e.cy - e.r,
-        maxX: e.cx + e.r,
-        maxY: e.cy + e.r
-      };
-    } else if (e instanceof TextEntity) {
-      return {
-        minX: e.x,
-        minY: e.y - 16,
-        maxX: e.x + 50,
-        maxY: e.y
-      };
-    } else if (e instanceof InsertEntity) {
-      return {
-        minX: e.x,
-        minY: e.y,
-        maxX: e.x,
-        maxY: e.y
-      };
-    }
-    return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
   }
 }
 
