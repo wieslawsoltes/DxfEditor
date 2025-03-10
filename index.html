@@ -149,8 +149,7 @@ class LineEntity extends Entity {
   }
 
   isHit(x, y) {
-    const dist = pointLineDistance(x, y, this.x1, this.y1, this.x2, this.y2);
-    return dist < 5;
+    return HitTestingService.isLineHit(this, x, y);
   }
 
   move(dx, dy) {
@@ -185,19 +184,7 @@ class PolylineEntity extends Entity {
   }
 
   isHit(x, y) {
-    for (let i = 0; i < this.vertices.length - 1; i++) {
-      let v1 = this.vertices[i];
-      let v2 = this.vertices[i+1];
-      const dist = pointLineDistance(x, y, v1.x, v1.y, v2.x, v2.y);
-      if (dist < 5) return true;
-    }
-    if (this.closed && this.vertices.length > 1) {
-      let v1 = this.vertices[this.vertices.length - 1];
-      let v2 = this.vertices[0];
-      const dist = pointLineDistance(x, y, v1.x, v1.y, v2.x, v2.y);
-      if (dist < 5) return true;
-    }
-    return false;
+    return HitTestingService.isPolylineHit(this, x, y);
   }
 
   move(dx, dy) {
@@ -226,10 +213,7 @@ class CircleEntity extends Entity {
   }
 
   isHit(x, y) {
-    const dx = this.cx - x;
-    const dy = this.cy - y;
-    const dist = Math.sqrt(dx*dx + dy*dy);
-    return dist <= this.r + 5;
+    return HitTestingService.isCircleHit(this, x, y);
   }
 
   move(dx, dy) {
@@ -261,14 +245,8 @@ class TextEntity extends Entity {
     ctx.restore();
   }
 
-  isHit(px, py) {
-    let width = 50; // fallback width
-    const tempCanvas = document.createElement('canvas').getContext('2d');
-    tempCanvas.font = "16px sans-serif";
-    width = tempCanvas.measureText(this.text).width;
-    const height = 16;
-    return (px >= this.x && px <= this.x + width &&
-            py <= this.y && py >= this.y - height);
+  isHit(x, y) {
+    return HitTestingService.isTextHit(this, x, y);
   }
 
   move(dx, dy) {
@@ -324,6 +302,7 @@ class InsertEntity extends Entity {
   }
 
   isHit(px, py) {
+    // This basic fallback is not used when hit testing via the view model.
     const dx = px - this.x;
     const dy = py - this.y;
     return Math.sqrt(dx*dx + dy*dy) < 10;
@@ -347,6 +326,95 @@ class Drawing {
 
 /*
   ===============================
+  ========== Hit Testing Service ==========
+  ===============================
+*/
+class HitTestingService {
+  static pointLineDistance(px, py, x1, y1, x2, y2) {
+    const A = px - x1;
+    const B = py - y1;
+    const C = x2 - x1;
+    const D = y2 - y1;
+    const dot = A * C + B * D;
+    const len_sq = C * C + D * D;
+    let param = (len_sq !== 0) ? dot / len_sq : -1;
+    let xx, yy;
+    if (param < 0) {
+      xx = x1; yy = y1;
+    } else if (param > 1) {
+      xx = x2; yy = y2;
+    } else {
+      xx = x1 + param * C;
+      yy = y1 + param * D;
+    }
+    const dx = px - xx;
+    const dy = py - yy;
+    return Math.sqrt(dx * dx + dy * dy);
+  }
+
+  static isLineHit(entity, x, y) {
+    return this.pointLineDistance(x, y, entity.x1, entity.y1, entity.x2, entity.y2) < 5;
+  }
+
+  static isPolylineHit(entity, x, y) {
+    for (let i = 0; i < entity.vertices.length - 1; i++) {
+      const v1 = entity.vertices[i];
+      const v2 = entity.vertices[i + 1];
+      if (this.pointLineDistance(x, y, v1.x, v1.y, v2.x, v2.y) < 5) {
+        return true;
+      }
+    }
+    if (entity.closed && entity.vertices.length > 1) {
+      const v1 = entity.vertices[entity.vertices.length - 1];
+      const v2 = entity.vertices[0];
+      if (this.pointLineDistance(x, y, v1.x, v1.y, v2.x, v2.y) < 5) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  static isCircleHit(entity, x, y) {
+    const dx = entity.cx - x;
+    const dy = entity.cy - y;
+    return Math.sqrt(dx * dx + dy * dy) <= entity.r + 5;
+  }
+
+  static isTextHit(entity, x, y) {
+    let width = 50; // fallback width
+    const tempCanvas = document.createElement('canvas').getContext('2d');
+    tempCanvas.font = "16px sans-serif";
+    width = tempCanvas.measureText(entity.text).width;
+    const height = 16;
+    return (x >= entity.x && x <= entity.x + width &&
+            y <= entity.y && y >= entity.y - height);
+  }
+
+  static isInsertHit(entity, x, y, blocks, getEntityBoundsCallback) {
+    const block = blocks[entity.blockName];
+    if (block && block.entities.length > 0) {
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      block.entities.forEach(e => {
+          const b = getEntityBoundsCallback(e);
+          minX = Math.min(minX, b.minX);
+          minY = Math.min(minY, b.minY);
+          maxX = Math.max(maxX, b.maxX);
+          maxY = Math.max(maxY, b.maxY);
+      });
+      minX += entity.x;
+      minY += entity.y;
+      maxX += entity.x;
+      maxY += entity.y;
+      if (x >= minX && x <= maxX && y >= minY && y <= maxY) return true;
+    }
+    const dx = x - entity.x;
+    const dy = y - entity.y;
+    return Math.sqrt(dx * dx + dy * dy) < 10;
+  }
+}
+
+/*
+  ===============================
   ========== Utilities ==========
   ===============================
 */
@@ -365,29 +433,6 @@ function cloneEntity(entity) {
     return new InsertEntity(entity.blockName, entity.x, entity.y);
   }
   return null;
-}
-
-function pointLineDistance(px, py, x1, y1, x2, y2) {
-  const A = px - x1;
-  const B = py - y1;
-  const C = x2 - x1;
-  const D = y2 - y1;
-  const dot = A * C + B * D;
-  const len_sq = C * C + D * D;
-  let param = -1;
-  if (len_sq !== 0) param = dot / len_sq;
-  let xx, yy;
-  if (param < 0) {
-    xx = x1; yy = y1;
-  } else if (param > 1) {
-    xx = x2; yy = y2;
-  } else {
-    xx = x1 + param * C;
-    yy = y1 + param * D;
-  }
-  const dx = px - xx;
-  const dy = py - yy;
-  return Math.sqrt(dx * dx + dy * dy);
 }
 
 /*
@@ -524,11 +569,13 @@ class DrawingViewModel {
   findHitEntity(x, y) {
     for (let i = this.drawing.entities.length - 1; i >= 0; i--) {
       const ent = this.drawing.entities[i];
+      let hit = false;
       if (ent instanceof InsertEntity) {
-        if (this.hitTestInsert(ent, x, y)) return ent;
+        hit = HitTestingService.isInsertHit(ent, x, y, this.drawing.blocks, this.getEntityBounds.bind(this));
       } else {
-        if (ent.isHit(x, y)) return ent;
+        hit = ent.isHit(x, y);
       }
+      if (hit) return ent;
     }
     return null;
   }
@@ -631,26 +678,6 @@ class DrawingViewModel {
       };
     }
     return { minX: 0, minY: 0, maxX: 0, maxY: 0 };
-  }
-
-  hitTestInsert(insertEntity, x, y) {
-    const block = this.drawing.blocks[insertEntity.blockName];
-    if (block && block.entities.length > 0) {
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      block.entities.forEach(e => {
-          const b = this.getEntityBounds(e);
-          minX = Math.min(minX, b.minX);
-          minY = Math.min(minY, b.minY);
-          maxX = Math.max(maxX, b.maxX);
-          maxY = Math.max(maxY, b.maxY);
-      });
-      minX += insertEntity.x;
-      minY += insertEntity.y;
-      maxX += insertEntity.x;
-      maxY += insertEntity.y;
-      if (x >= minX && x <= maxX && y >= minY && y <= maxY) return true;
-    }
-    return insertEntity.isHit(x, y);
   }
 }
 
