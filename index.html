@@ -31,7 +31,7 @@
       width: 100%;
       height: 120px;
     }
-    /* Modal styles for block editor */
+    /* Modal styles for block and entity editor */
     #blockEditorOverlay, #entityEditorOverlay {
       display: none;
       position: fixed;
@@ -124,9 +124,7 @@ class Entity {
   constructor() {
     this.selected = false; // For selection highlight
   }
-  draw(ctx) {}
-  isHit(x, y) { return false; }
-  move(dx, dy) {}
+  // Drawing logic has been removed from entity classes.
 }
 
 class LineEntity extends Entity {
@@ -137,21 +135,7 @@ class LineEntity extends Entity {
     this.x2 = x2;
     this.y2 = y2;
   }
-
-  draw(ctx) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.strokeStyle = this.selected ? 'red' : 'black';
-    ctx.moveTo(this.x1, this.y1);
-    ctx.lineTo(this.x2, this.y2);
-    ctx.stroke();
-    ctx.restore();
-  }
-
-  isHit(x, y) {
-    return HitTestingService.isLineHit(this, x, y);
-  }
-
+  isHit(x, y) { return HitTestingService.isLineHit(this, x, y); }
   move(dx, dy) {
     this.x1 += dx;
     this.y1 += dy;
@@ -166,27 +150,9 @@ class PolylineEntity extends Entity {
     this.vertices = vertices || [];
     this.closed = closed;
   }
-
-  draw(ctx) {
-    if (this.vertices.length === 0) return;
-    ctx.save();
-    ctx.beginPath();
-    ctx.strokeStyle = this.selected ? 'red' : 'black';
-    ctx.moveTo(this.vertices[0].x, this.vertices[0].y);
-    for (let i = 1; i < this.vertices.length; i++) {
-      ctx.lineTo(this.vertices[i].x, this.vertices[i].y);
-    }
-    if (this.closed) {
-      ctx.closePath();
-    }
-    ctx.stroke();
-    ctx.restore();
-  }
-
   isHit(x, y) {
     return HitTestingService.isPolylineHit(this, x, y);
   }
-
   move(dx, dy) {
     this.vertices.forEach(v => {
       v.x += dx;
@@ -202,20 +168,9 @@ class CircleEntity extends Entity {
     this.cy = cy;
     this.r = r;
   }
-
-  draw(ctx) {
-    ctx.save();
-    ctx.beginPath();
-    ctx.strokeStyle = this.selected ? 'red' : 'black';
-    ctx.arc(this.cx, this.cy, this.r, 0, 2*Math.PI);
-    ctx.stroke();
-    ctx.restore();
-  }
-
   isHit(x, y) {
     return HitTestingService.isCircleHit(this, x, y);
   }
-
   move(dx, dy) {
     this.cx += dx;
     this.cy += dy;
@@ -229,26 +184,9 @@ class TextEntity extends Entity {
     this.y = y;
     this.text = text || "Text";
   }
-
-  draw(ctx) {
-    ctx.save();
-    ctx.font = "16px sans-serif";
-    ctx.fillStyle = 'black';
-    if (this.selected) {
-      ctx.strokeStyle = 'red';
-      ctx.beginPath();
-      ctx.moveTo(this.x, this.y);
-      ctx.lineTo(this.x + ctx.measureText(this.text).width, this.y);
-      ctx.stroke();
-    }
-    ctx.fillText(this.text, this.x, this.y);
-    ctx.restore();
-  }
-
   isHit(x, y) {
     return HitTestingService.isTextHit(this, x, y);
   }
-
   move(dx, dy) {
     this.x += dx;
     this.y += dy;
@@ -257,12 +195,10 @@ class TextEntity extends Entity {
 
 /**
  * A block is essentially a named definition containing a list of entities.
- * We store them in their local coordinates.
  */
 class Block {
   constructor(name, entities = []) {
     this.name = name;
-    // Make a copy of entities in block definition
     this.entities = entities.map(e => cloneEntity(e));
   }
 }
@@ -277,37 +213,11 @@ class InsertEntity extends Entity {
     this.x = x;
     this.y = y;
   }
-
-  draw(ctx, blocks) {
-    const block = blocks[this.blockName];
-    if (!block) return;
-
-    ctx.save();
-    ctx.translate(this.x, this.y);
-    for (let e of block.entities) {
-      ctx.save();
-      e.draw(ctx);
-      ctx.restore();
-    }
-    ctx.restore();
-
-    if (this.selected) {
-      ctx.save();
-      ctx.strokeStyle = 'red';
-      ctx.beginPath();
-      ctx.arc(this.x, this.y, 5, 0, 2*Math.PI);
-      ctx.stroke();
-      ctx.restore();
-    }
-  }
-
   isHit(px, py) {
-    // This basic fallback is not used when hit testing via the view model.
     const dx = px - this.x;
     const dy = py - this.y;
     return Math.sqrt(dx*dx + dy*dy) < 10;
   }
-
   move(dx, dy) {
     this.x += dx;
     this.y += dy;
@@ -326,7 +236,7 @@ class Drawing {
 
 /*
   ===============================
-  ========== Hit Testing Service ==========
+  ========== Hit Testing =========
   ===============================
 */
 class HitTestingService {
@@ -437,6 +347,78 @@ function cloneEntity(entity) {
 
 /*
   ===============================
+  ========== Drawing Service ==========
+  ===============================
+*/
+// All canvas drawing code is now handled by DrawingService.
+class DrawingService {
+  static drawEntity(entity, ctx, blocks) {
+    if (entity instanceof LineEntity) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.strokeStyle = entity.selected ? 'red' : 'black';
+      ctx.moveTo(entity.x1, entity.y1);
+      ctx.lineTo(entity.x2, entity.y2);
+      ctx.stroke();
+      ctx.restore();
+    } else if (entity instanceof PolylineEntity) {
+      if (entity.vertices.length === 0) return;
+      ctx.save();
+      ctx.beginPath();
+      ctx.strokeStyle = entity.selected ? 'red' : 'black';
+      ctx.moveTo(entity.vertices[0].x, entity.vertices[0].y);
+      for (let i = 1; i < entity.vertices.length; i++) {
+        ctx.lineTo(entity.vertices[i].x, entity.vertices[i].y);
+      }
+      if (entity.closed) {
+        ctx.closePath();
+      }
+      ctx.stroke();
+      ctx.restore();
+    } else if (entity instanceof CircleEntity) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.strokeStyle = entity.selected ? 'red' : 'black';
+      ctx.arc(entity.cx, entity.cy, entity.r, 0, 2 * Math.PI);
+      ctx.stroke();
+      ctx.restore();
+    } else if (entity instanceof TextEntity) {
+      ctx.save();
+      ctx.font = "16px sans-serif";
+      ctx.fillStyle = 'black';
+      if (entity.selected) {
+        ctx.strokeStyle = 'red';
+        ctx.beginPath();
+        ctx.moveTo(entity.x, entity.y);
+        const textWidth = ctx.measureText(entity.text).width;
+        ctx.lineTo(entity.x + textWidth, entity.y);
+        ctx.stroke();
+      }
+      ctx.fillText(entity.text, entity.x, entity.y);
+      ctx.restore();
+    } else if (entity instanceof InsertEntity) {
+      const block = blocks[entity.blockName];
+      if (!block) return;
+      ctx.save();
+      ctx.translate(entity.x, entity.y);
+      for (let e of block.entities) {
+        DrawingService.drawEntity(e, ctx, blocks);
+      }
+      ctx.restore();
+      if (entity.selected) {
+        ctx.save();
+        ctx.strokeStyle = 'red';
+        ctx.beginPath();
+        ctx.arc(entity.x, entity.y, 5, 0, 2 * Math.PI);
+        ctx.stroke();
+        ctx.restore();
+      }
+    }
+  }
+}
+
+/*
+  ===============================
   ========== ViewModel ==========
   ===============================
 */
@@ -482,7 +464,6 @@ class DrawingViewModel {
       this.startX = x;
       this.startY = y;
     } else if (this.currentTool === 'rect') {
-      // Draw rectangle using polyline
       this.tempEntity = new PolylineEntity([
         {x: x, y: y},
         {x: x, y: y},
@@ -506,21 +487,17 @@ class DrawingViewModel {
       this.tempEntity = null;
     } else if (this.currentTool === 'polyline') {
       if (!this.tempEntity) {
-        // Start new polyline: add first point twice for preview
         this.tempEntity = new PolylineEntity([{x: x, y: y}, {x: x, y: y}], false);
         this.drawing.entities.push(this.tempEntity);
       } else {
-        // Check if click is near first vertex to finish
         let first = this.tempEntity.vertices[0];
         const dx = x - first.x;
         const dy = y - first.y;
-        if (Math.sqrt(dx*dx + dy*dy) < 5 && this.tempEntity.vertices.length > 2) {
-          // Finish polyline and close it
+        if (Math.sqrt(dx * dx + dy * dy) < 5 && this.tempEntity.vertices.length > 2) {
           this.tempEntity.vertices[this.tempEntity.vertices.length - 1] = {x: first.x, y: first.y};
           this.tempEntity.closed = true;
           this.tempEntity = null;
         } else {
-          // Commit current preview vertex and add a new preview
           this.tempEntity.vertices[this.tempEntity.vertices.length - 1] = {x: x, y: y};
           this.tempEntity.vertices.push({x: x, y: y});
         }
@@ -538,7 +515,6 @@ class DrawingViewModel {
       this.tempEntity.x2 = x;
       this.tempEntity.y2 = y;
     } else if (this.currentTool === 'rect' && this.tempEntity) {
-      // Update rectangle vertices based on start point and current mouse position
       this.tempEntity.vertices = [
         {x: this.startX, y: this.startY},
         {x: x, y: this.startY},
@@ -548,9 +524,8 @@ class DrawingViewModel {
     } else if (this.currentTool === 'circle' && this.tempEntity) {
       const dx = x - this.tempEntity.cx;
       const dy = y - this.tempEntity.cy;
-      this.tempEntity.r = Math.sqrt(dx*dx + dy*dy);
+      this.tempEntity.r = Math.sqrt(dx * dx + dy * dy);
     } else if (this.currentTool === 'polyline' && this.tempEntity) {
-      // Update the preview point
       this.tempEntity.vertices[this.tempEntity.vertices.length - 1] = {x: x, y: y};
     } else if (this.currentTool === 'select' && this.isDragging) {
       const dx = x - this.startX;
@@ -683,10 +658,10 @@ class DrawingViewModel {
 
 /*
   ===============================
-  ========== View ===============
+  ========== CanvasRenderer ==========
   ===============================
 */
-
+// The canvas renderer now delegates all drawing to DrawingService.
 class CanvasRenderer {
   constructor(canvas, drawing, viewModel) {
     this.canvas = canvas;
@@ -748,7 +723,6 @@ class CanvasRenderer {
     this.isMouseDown = true;
     this.lastX = pos.x;
     this.lastY = pos.y;
-    // Convert mouse coordinates to drawing coordinates
     const tx = (pos.x - this.panX) / this.scale;
     const ty = (pos.y - this.panY) / this.scale;
     this.viewModel.mouseDown(tx, ty, evt.shiftKey);
@@ -787,18 +761,14 @@ class CanvasRenderer {
   onWheel(evt) {
     evt.preventDefault();
     const mousePos = this.getMousePos(evt);
-    // Convert mouse position to drawing coordinates before zooming
     const x = (mousePos.x - this.panX) / this.scale;
     const y = (mousePos.y - this.panY) / this.scale;
     const zoomFactor = 1.1;
     if (evt.deltaY < 0) {
-      // Zoom in
       this.scale *= zoomFactor;
     } else {
-      // Zoom out
       this.scale /= zoomFactor;
     }
-    // Adjust pan so that the drawing point under the mouse remains fixed
     this.panX = mousePos.x - x * this.scale;
     this.panY = mousePos.y - y * this.scale;
   }
@@ -855,21 +825,15 @@ class CanvasRenderer {
   }
 
   renderLoop() {
-    // Clear without transform
     this.ctx.save();
     this.ctx.setTransform(1, 0, 0, 1, 0, 0);
     this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
     this.ctx.restore();
 
-    // Apply pan/zoom transform
     this.ctx.save();
     this.ctx.setTransform(this.scale, 0, 0, this.scale, this.panX, this.panY);
     for (let ent of this.drawing.entities) {
-      if (ent instanceof InsertEntity) {
-        ent.draw(this.ctx, this.drawing.blocks);
-      } else {
-        ent.draw(this.ctx);
-      }
+      DrawingService.drawEntity(ent, this.ctx, this.drawing.blocks);
     }
     this.ctx.restore();
     requestAnimationFrame(() => this.renderLoop());
@@ -1106,7 +1070,7 @@ function importDXF(dxfString, drawing) {
     drawing.blocks[blockName] = new Block(blockName, realEntities);
   }
   function parseVertex() {
-    let vertexType = nextPair(); // should be "VERTEX"
+    let vertexType = nextPair();
     let x = 0, y = 0;
     while (index < pairs.length) {
       let p = peekPair();
