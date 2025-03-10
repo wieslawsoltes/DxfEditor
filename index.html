@@ -124,7 +124,6 @@ class Entity {
   constructor() {
     this.selected = false; // For selection highlight
   }
-  // Drawing logic has been removed from entity classes.
 }
 
 class LineEntity extends Entity {
@@ -214,7 +213,6 @@ class InsertEntity extends Entity {
     this.y = y;
   }
   isHit(px, py) {
-    // Hit testing for INSERT now uses bounds from BoundsService.
     return HitTestingService.isInsertHit(this, px, py, drawing.blocks);
   }
   move(dx, dy) {
@@ -339,7 +337,7 @@ class HitTestingService {
   }
 
   static isTextHit(entity, x, y) {
-    let width = 50; // fallback width
+    let width = 50;
     const tempCanvas = document.createElement('canvas').getContext('2d');
     tempCanvas.font = "16px sans-serif";
     width = tempCanvas.measureText(entity.text).width;
@@ -398,7 +396,6 @@ function cloneEntity(entity) {
   ========== Drawing Service ==========
   ===============================
 */
-// All canvas drawing code is now handled by DrawingService.
 class DrawingService {
   static drawEntity(entity, ctx, blocks) {
     if (entity instanceof LineEntity) {
@@ -470,123 +467,15 @@ class DrawingService {
   ========== ViewModel ==========
   ===============================
 */
-
 class DrawingViewModel {
   constructor(drawing) {
     this.drawing = drawing;
-    this.currentTool = 'select';
+    // properties previously used by tool logic:
     this.tempEntity = null;
     this.startX = 0;
     this.startY = 0;
     this.isDragging = false;
     this.blockToInsert = null;
-  }
-
-  setTool(toolName) {
-    this.currentTool = toolName;
-    this.tempEntity = null;
-    this.blockToInsert = null;
-  }
-
-  mouseDown(x, y, shiftKey) {
-    if (this.currentTool === 'select') {
-      const hit = this.findHitEntity(x, y);
-      if (hit) {
-        if (shiftKey) {
-          hit.selected = !hit.selected;
-        } else {
-          this.clearSelection();
-          hit.selected = true;
-        }
-      } else {
-        if (!shiftKey) {
-          this.clearSelection();
-        }
-      }
-      this.isDragging = true;
-      this.startX = x;
-      this.startY = y;
-    } else if (this.currentTool === 'line') {
-      this.tempEntity = new LineEntity(x, y, x, y);
-      this.drawing.entities.push(this.tempEntity);
-      this.startX = x;
-      this.startY = y;
-    } else if (this.currentTool === 'rect') {
-      this.tempEntity = new PolylineEntity([
-        {x: x, y: y},
-        {x: x, y: y},
-        {x: x, y: y},
-        {x: x, y: y}
-      ], true);
-      this.drawing.entities.push(this.tempEntity);
-      this.startX = x;
-      this.startY = y;
-    } else if (this.currentTool === 'circle') {
-      this.tempEntity = new CircleEntity(x, y, 0);
-      this.drawing.entities.push(this.tempEntity);
-      this.startX = x;
-      this.startY = y;
-    } else if (this.currentTool === 'text') {
-      const text = prompt("Enter text:", "Hello");
-      if (text !== null) {
-        this.tempEntity = new TextEntity(x, y, text);
-        this.drawing.entities.push(this.tempEntity);
-      }
-      this.tempEntity = null;
-    } else if (this.currentTool === 'polyline') {
-      if (!this.tempEntity) {
-        this.tempEntity = new PolylineEntity([{x: x, y: y}, {x: x, y: y}], false);
-        this.drawing.entities.push(this.tempEntity);
-      } else {
-        let first = this.tempEntity.vertices[0];
-        const dx = x - first.x;
-        const dy = y - first.y;
-        if (Math.sqrt(dx * dx + dy * dy) < 5 && this.tempEntity.vertices.length > 2) {
-          this.tempEntity.vertices[this.tempEntity.vertices.length - 1] = {x: first.x, y: first.y};
-          this.tempEntity.closed = true;
-          this.tempEntity = null;
-        } else {
-          this.tempEntity.vertices[this.tempEntity.vertices.length - 1] = {x: x, y: y};
-          this.tempEntity.vertices.push({x: x, y: y});
-        }
-      }
-    } else if (this.currentTool === 'insertBlock') {
-      if (this.blockToInsert) {
-        const insertEnt = new InsertEntity(this.blockToInsert, x, y);
-        this.drawing.entities.push(insertEnt);
-      }
-    }
-  }
-
-  mouseMove(x, y) {
-    if (this.currentTool === 'line' && this.tempEntity) {
-      this.tempEntity.x2 = x;
-      this.tempEntity.y2 = y;
-    } else if (this.currentTool === 'rect' && this.tempEntity) {
-      this.tempEntity.vertices = [
-        {x: this.startX, y: this.startY},
-        {x: x, y: this.startY},
-        {x: x, y: y},
-        {x: this.startX, y: y}
-      ];
-    } else if (this.currentTool === 'circle' && this.tempEntity) {
-      const dx = x - this.tempEntity.cx;
-      const dy = y - this.tempEntity.cy;
-      this.tempEntity.r = Math.sqrt(dx * dx + dy * dy);
-    } else if (this.currentTool === 'polyline' && this.tempEntity) {
-      this.tempEntity.vertices[this.tempEntity.vertices.length - 1] = {x: x, y: y};
-    } else if (this.currentTool === 'select' && this.isDragging) {
-      const dx = x - this.startX;
-      const dy = y - this.startY;
-      this.moveSelection(dx, dy);
-      this.startX = x;
-      this.startY = y;
-    }
-  }
-
-  mouseUp(x, y) {
-    this.isDragging = false;
-    this.tempEntity = null;
   }
 
   findHitEntity(x, y) {
@@ -653,8 +542,222 @@ class DrawingViewModel {
   }
 
   setBlockToInsert(blockName) {
-    this.currentTool = 'insertBlock';
     this.blockToInsert = blockName;
+  }
+}
+
+/*
+  ===============================
+  ======= Tools Service =========
+  ===============================
+*/
+// Common base class for all tools
+class BaseTool {
+  constructor(viewModel) {
+    this.viewModel = viewModel;
+  }
+  mouseDown(x, y, evt) {}
+  mouseMove(x, y, evt) {}
+  mouseUp(x, y, evt) {}
+}
+
+// SELECT tool
+class SelectTool extends BaseTool {
+  mouseDown(x, y, evt) {
+    const shiftKey = evt.shiftKey;
+    const hit = this.viewModel.findHitEntity(x, y);
+    if (hit) {
+      if (shiftKey) {
+        hit.selected = !hit.selected;
+      } else {
+        this.viewModel.clearSelection();
+        hit.selected = true;
+      }
+    } else {
+      if (!shiftKey) {
+        this.viewModel.clearSelection();
+      }
+    }
+    this.viewModel.isDragging = true;
+    this.viewModel.startX = x;
+    this.viewModel.startY = y;
+  }
+  mouseMove(x, y, evt) {
+    if (this.viewModel.isDragging) {
+      const dx = x - this.viewModel.startX;
+      const dy = y - this.viewModel.startY;
+      this.viewModel.moveSelection(dx, dy);
+      this.viewModel.startX = x;
+      this.viewModel.startY = y;
+    }
+  }
+  mouseUp(x, y, evt) {
+    this.viewModel.isDragging = false;
+  }
+}
+
+// LINE tool
+class LineTool extends BaseTool {
+  mouseDown(x, y, evt) {
+    this.viewModel.tempEntity = new LineEntity(x, y, x, y);
+    this.viewModel.drawing.entities.push(this.viewModel.tempEntity);
+    this.viewModel.startX = x;
+    this.viewModel.startY = y;
+  }
+  mouseMove(x, y, evt) {
+    if (this.viewModel.tempEntity) {
+      this.viewModel.tempEntity.x2 = x;
+      this.viewModel.tempEntity.y2 = y;
+    }
+  }
+  mouseUp(x, y, evt) {
+    this.viewModel.tempEntity = null;
+  }
+}
+
+// RECTANGLE tool (implemented as a closed polyline)
+class RectTool extends BaseTool {
+  mouseDown(x, y, evt) {
+    this.viewModel.tempEntity = new PolylineEntity([
+      {x: x, y: y},
+      {x: x, y: y},
+      {x: x, y: y},
+      {x: x, y: y}
+    ], true);
+    this.viewModel.drawing.entities.push(this.viewModel.tempEntity);
+    this.viewModel.startX = x;
+    this.viewModel.startY = y;
+  }
+  mouseMove(x, y, evt) {
+    if (this.viewModel.tempEntity) {
+      this.viewModel.tempEntity.vertices = [
+        {x: this.viewModel.startX, y: this.viewModel.startY},
+        {x: x, y: this.viewModel.startY},
+        {x: x, y: y},
+        {x: this.viewModel.startX, y: y}
+      ];
+    }
+  }
+  mouseUp(x, y, evt) {
+    this.viewModel.tempEntity = null;
+  }
+}
+
+// CIRCLE tool
+class CircleTool extends BaseTool {
+  mouseDown(x, y, evt) {
+    this.viewModel.tempEntity = new CircleEntity(x, y, 0);
+    this.viewModel.drawing.entities.push(this.viewModel.tempEntity);
+    this.viewModel.startX = x;
+    this.viewModel.startY = y;
+  }
+  mouseMove(x, y, evt) {
+    if (this.viewModel.tempEntity) {
+      const dx = x - this.viewModel.tempEntity.cx;
+      const dy = y - this.viewModel.tempEntity.cy;
+      this.viewModel.tempEntity.r = Math.sqrt(dx * dx + dy * dy);
+    }
+  }
+  mouseUp(x, y, evt) {
+    this.viewModel.tempEntity = null;
+  }
+}
+
+// TEXT tool
+class TextTool extends BaseTool {
+  mouseDown(x, y, evt) {
+    const text = prompt("Enter text:", "Hello");
+    if (text !== null) {
+      const newEntity = new TextEntity(x, y, text);
+      this.viewModel.drawing.entities.push(newEntity);
+    }
+  }
+}
+
+// POLYLINE tool
+class PolylineTool extends BaseTool {
+  mouseDown(x, y, evt) {
+    if (!this.viewModel.tempEntity) {
+      this.viewModel.tempEntity = new PolylineEntity([{x: x, y: y}, {x: x, y: y}], false);
+      this.viewModel.drawing.entities.push(this.viewModel.tempEntity);
+    } else {
+      let first = this.viewModel.tempEntity.vertices[0];
+      const dx = x - first.x;
+      const dy = y - first.y;
+      if (Math.sqrt(dx * dx + dy * dy) < 5 && this.viewModel.tempEntity.vertices.length > 2) {
+        this.viewModel.tempEntity.vertices[this.viewModel.tempEntity.vertices.length - 1] = {x: first.x, y: first.y};
+        this.viewModel.tempEntity.closed = true;
+        this.viewModel.tempEntity = null;
+      } else {
+        this.viewModel.tempEntity.vertices[this.viewModel.tempEntity.vertices.length - 1] = {x: x, y: y};
+        this.viewModel.tempEntity.vertices.push({x: x, y: y});
+      }
+    }
+  }
+  mouseMove(x, y, evt) {
+    if (this.viewModel.tempEntity) {
+      this.viewModel.tempEntity.vertices[this.viewModel.tempEntity.vertices.length - 1] = {x: x, y: y};
+    }
+  }
+  mouseUp(x, y, evt) {
+    // No action on mouseUp for polyline
+  }
+}
+
+// INSERT BLOCK tool
+class InsertBlockTool extends BaseTool {
+  mouseDown(x, y, evt) {
+    if (this.viewModel.blockToInsert) {
+      const insertEnt = new InsertEntity(this.viewModel.blockToInsert, x, y);
+      this.viewModel.drawing.entities.push(insertEnt);
+    }
+  }
+}
+
+// ToolsService – delegates mouse events to the current tool.
+class ToolsService {
+  constructor(viewModel) {
+    this.viewModel = viewModel;
+    this.tools = {
+      select: new SelectTool(viewModel),
+      line: new LineTool(viewModel),
+      rect: new RectTool(viewModel),
+      circle: new CircleTool(viewModel),
+      text: new TextTool(viewModel),
+      polyline: new PolylineTool(viewModel),
+      insertBlock: new InsertBlockTool(viewModel)
+    };
+    // The 'pan' tool is handled separately in CanvasRenderer.
+    this.currentToolName = 'select';
+    this.currentTool = this.tools[this.currentToolName];
+  }
+
+  setTool(toolName) {
+    if (toolName === 'pan') {
+      this.currentToolName = 'pan';
+      this.currentTool = null;
+    } else if (this.tools[toolName]) {
+      this.currentToolName = toolName;
+      this.currentTool = this.tools[toolName];
+    }
+  }
+
+  mouseDown(x, y, evt) {
+    if (this.currentToolName !== 'pan' && this.currentTool && this.currentTool.mouseDown) {
+      this.currentTool.mouseDown(x, y, evt);
+    }
+  }
+
+  mouseMove(x, y, evt) {
+    if (this.currentToolName !== 'pan' && this.currentTool && this.currentTool.mouseMove) {
+      this.currentTool.mouseMove(x, y, evt);
+    }
+  }
+
+  mouseUp(x, y, evt) {
+    if (this.currentToolName !== 'pan' && this.currentTool && this.currentTool.mouseUp) {
+      this.currentTool.mouseUp(x, y, evt);
+    }
   }
 }
 
@@ -663,13 +766,13 @@ class DrawingViewModel {
   ========== CanvasRenderer ==========
   ===============================
 */
-// The canvas renderer now delegates all drawing to DrawingService.
 class CanvasRenderer {
-  constructor(canvas, drawing, viewModel) {
+  constructor(canvas, drawing, viewModel, toolsService) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
     this.drawing = drawing;
     this.viewModel = viewModel;
+    this.toolsService = toolsService;
 
     // Pan/Zoom properties
     this.panX = 0;
@@ -716,7 +819,7 @@ class CanvasRenderer {
 
   onMouseDown(evt) {
     const pos = this.getMousePos(evt);
-    if (this.viewModel.currentTool === 'pan') {
+    if (this.toolsService.currentToolName === 'pan') {
       this.isPanning = true;
       this.panStartX = pos.x;
       this.panStartY = pos.y;
@@ -727,12 +830,12 @@ class CanvasRenderer {
     this.lastY = pos.y;
     const tx = (pos.x - this.panX) / this.scale;
     const ty = (pos.y - this.panY) / this.scale;
-    this.viewModel.mouseDown(tx, ty, evt.shiftKey);
+    this.toolsService.mouseDown(tx, ty, evt);
   }
 
   onMouseMove(evt) {
     const pos = this.getMousePos(evt);
-    if (this.viewModel.currentTool === 'pan' && this.isPanning) {
+    if (this.toolsService.currentToolName === 'pan' && this.isPanning) {
          let dx = pos.x - this.panStartX;
          let dy = pos.y - this.panStartY;
          this.panX += dx;
@@ -744,20 +847,20 @@ class CanvasRenderer {
     if (this.isMouseDown) {
          const tx = (pos.x - this.panX) / this.scale;
          const ty = (pos.y - this.panY) / this.scale;
-         this.viewModel.mouseMove(tx, ty);
+         this.toolsService.mouseMove(tx, ty, evt);
     }
   }
 
   onMouseUp(evt) {
     const pos = this.getMousePos(evt);
-    if (this.viewModel.currentTool === 'pan') {
+    if (this.toolsService.currentToolName === 'pan') {
          this.isPanning = false;
          return;
     }
     this.isMouseDown = false;
     const tx = (pos.x - this.panX) / this.scale;
     const ty = (pos.y - this.panY) / this.scale;
-    this.viewModel.mouseUp(tx, ty);
+    this.toolsService.mouseUp(tx, ty, evt);
   }
 
   onWheel(evt) {
@@ -779,7 +882,7 @@ class CanvasRenderer {
     evt.preventDefault();
     const touch = evt.touches[0];
     const pos = this.getTouchPos(touch);
-    if (this.viewModel.currentTool === 'pan') {
+    if (this.toolsService.currentToolName === 'pan') {
       this.isPanning = true;
       this.panStartX = pos.x;
       this.panStartY = pos.y;
@@ -790,14 +893,14 @@ class CanvasRenderer {
     this.lastY = pos.y;
     const tx = (pos.x - this.panX) / this.scale;
     const ty = (pos.y - this.panY) / this.scale;
-    this.viewModel.mouseDown(tx, ty, false);
+    this.toolsService.mouseDown(tx, ty, evt);
   }
 
   onTouchMove(evt) {
     evt.preventDefault();
     const touch = evt.touches[0];
     const pos = this.getTouchPos(touch);
-    if (this.viewModel.currentTool === 'pan' && this.isPanning) {
+    if (this.toolsService.currentToolName === 'pan' && this.isPanning) {
       let dx = pos.x - this.panStartX;
       let dy = pos.y - this.panStartY;
       this.panX += dx;
@@ -809,7 +912,7 @@ class CanvasRenderer {
     if (this.isMouseDown) {
       const tx = (pos.x - this.panX) / this.scale;
       const ty = (pos.y - this.panY) / this.scale;
-      this.viewModel.mouseMove(tx, ty);
+      this.toolsService.mouseMove(tx, ty, evt);
     }
   }
 
@@ -821,7 +924,7 @@ class CanvasRenderer {
       const pos = this.getTouchPos(touch);
       const tx = (pos.x - this.panX) / this.scale;
       const ty = (pos.y - this.panY) / this.scale;
-      this.viewModel.mouseUp(tx, ty);
+      this.toolsService.mouseUp(tx, ty, evt);
     }
     this.isPanning = false;
   }
@@ -1188,8 +1291,6 @@ function convertDXFEntityToModel(e) {
   ========== Conversion =========
   ===============================
 */
-// These helper functions convert between an entity instance and a plain object
-// representation for editing via JSON.
 function entityToObject(entity) {
   if (entity instanceof LineEntity) {
     return { type: "Line", x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
@@ -1225,9 +1326,8 @@ function objectToEntity(obj) {
   ========== Editing UI =========
   ===============================
 */
-// For block editing we already have the modal and handlers.
-// Now add support for editing a single entity.
 let currentEditingEntityIndex = null;
+let currentEditingBlockName = null;
 
 document.getElementById('editEntity').addEventListener('click', () => {
   const selectedEntities = drawing.entities.filter(e => e.selected);
@@ -1269,131 +1369,131 @@ document.getElementById('cancelEntityEdit').addEventListener('click', () => {
   currentEditingEntityIndex = null;
 });
 
+document.getElementById('editBlock').addEventListener('click', () => {
+  const name = prompt("Block name to edit:", "Block1");
+  if (name && drawing.blocks[name]) {
+    currentEditingBlockName = name;
+    const block = drawing.blocks[name];
+    const objs = block.entities.map(entityToObject);
+    const jsonStr = JSON.stringify(objs, null, 2);
+    document.getElementById('blockEditorTextarea').value = jsonStr;
+    document.getElementById('blockEditorOverlay').style.display = 'block';
+    document.getElementById('blockEditorModal').style.display = 'block';
+  } else {
+    alert("Block not found!");
+  }
+});
+
+document.getElementById('saveBlockEdit').addEventListener('click', () => {
+  try {
+    const jsonStr = document.getElementById('blockEditorTextarea').value;
+    const objs = JSON.parse(jsonStr);
+    if (!Array.isArray(objs)) {
+      alert("Invalid format: Expected an array of entities.");
+      return;
+    }
+    const newEntities = objs.map(objectToEntity).filter(e => e !== null);
+    drawing.blocks[currentEditingBlockName].entities = newEntities;
+    document.getElementById('blockEditorOverlay').style.display = 'none';
+    document.getElementById('blockEditorModal').style.display = 'none';
+    currentEditingBlockName = null;
+  } catch (e) {
+    alert("Error parsing JSON: " + e.message);
+  }
+});
+
+document.getElementById('cancelBlockEdit').addEventListener('click', () => {
+  document.getElementById('blockEditorOverlay').style.display = 'none';
+  document.getElementById('blockEditorModal').style.display = 'none';
+  currentEditingBlockName = null;
+});
+
 /*
   ===============================
   ========== Main ===============
   ===============================
 */
+const drawing = new Drawing();
+const viewModel = new DrawingViewModel(drawing);
+const toolsService = new ToolsService(viewModel);
+const canvas = document.getElementById('drawingCanvas');
+const renderer = new CanvasRenderer(canvas, drawing, viewModel, toolsService);
 
-(function(){
-  const drawing = new Drawing();
-  const viewModel = new DrawingViewModel(drawing);
-  const canvas = document.getElementById('drawingCanvas');
-  const renderer = new CanvasRenderer(canvas, drawing, viewModel);
+document.getElementById('newDrawing').addEventListener('click', () => {
+  drawing.entities = [];
+  drawing.blocks = {};
+  renderer.panX = 0;
+  renderer.panY = 0;
+  renderer.scale = 1;
+});
 
-  document.getElementById('newDrawing').addEventListener('click', ()=>{
-    drawing.entities = [];
-    drawing.blocks = {};
-    // Reset pan/zoom view
-    renderer.panX = 0;
-    renderer.panY = 0;
-    renderer.scale = 1;
-  });
+document.getElementById('panTool').addEventListener('click', () => {
+  toolsService.setTool('pan');
+});
 
-  document.getElementById('panTool').addEventListener('click', ()=>{
-    viewModel.setTool('pan');
-  });
+document.getElementById('selectTool').addEventListener('click', () => {
+  toolsService.setTool('select');
+});
 
-  document.getElementById('selectTool').addEventListener('click', ()=>{
-    viewModel.setTool('select');
-  });
-  document.getElementById('lineTool').addEventListener('click', ()=>{
-    viewModel.setTool('line');
-  });
-  document.getElementById('rectTool').addEventListener('click', ()=>{
-    viewModel.setTool('rect');
-  });
-  document.getElementById('circleTool').addEventListener('click', ()=>{
-    viewModel.setTool('circle');
-  });
-  document.getElementById('textTool').addEventListener('click', ()=>{
-    viewModel.setTool('text');
-  });
-  document.getElementById('polylineTool').addEventListener('click', ()=>{
-    viewModel.setTool('polyline');
-  });
+document.getElementById('lineTool').addEventListener('click', () => {
+  toolsService.setTool('line');
+});
 
-  document.getElementById('createBlock').addEventListener('click', ()=>{
-    const name = prompt("Block name:", "Block1");
-    if (name) {
-      viewModel.createBlockFromSelection(name);
-    }
-  });
+document.getElementById('rectTool').addEventListener('click', () => {
+  toolsService.setTool('rect');
+});
 
-  document.getElementById('insertBlock').addEventListener('click', ()=>{
-    const name = prompt("Block name to insert:", "Block1");
-    if (name && drawing.blocks[name]) {
-      viewModel.setBlockToInsert(name);
-    } else {
-      alert("Block not found!");
-    }
-  });
+document.getElementById('circleTool').addEventListener('click', () => {
+  toolsService.setTool('circle');
+});
 
-  // Block Editing via modal JSON editor
-  document.getElementById('editBlock').addEventListener('click', ()=>{
-    const name = prompt("Block name to edit:", "Block1");
-    if (name && drawing.blocks[name]) {
-      currentEditingBlockName = name;
-      const block = drawing.blocks[name];
-      // Convert block entities to plain objects
-      const objs = block.entities.map(entityToObject);
-      const jsonStr = JSON.stringify(objs, null, 2);
-      document.getElementById('blockEditorTextarea').value = jsonStr;
-      document.getElementById('blockEditorOverlay').style.display = 'block';
-      document.getElementById('blockEditorModal').style.display = 'block';
-    } else {
-      alert("Block not found!");
-    }
-  });
+document.getElementById('textTool').addEventListener('click', () => {
+  toolsService.setTool('text');
+});
 
-  document.getElementById('saveBlockEdit').addEventListener('click', ()=>{
-    try {
-      const jsonStr = document.getElementById('blockEditorTextarea').value;
-      const objs = JSON.parse(jsonStr);
-      if (!Array.isArray(objs)) {
-        alert("Invalid format: Expected an array of entities.");
-        return;
-      }
-      const newEntities = objs.map(objectToEntity).filter(e => e !== null);
-      drawing.blocks[currentEditingBlockName].entities = newEntities;
-      // Hide modal
-      document.getElementById('blockEditorOverlay').style.display = 'none';
-      document.getElementById('blockEditorModal').style.display = 'none';
-      currentEditingBlockName = null;
-    } catch (e) {
-      alert("Error parsing JSON: " + e.message);
-    }
-  });
+document.getElementById('polylineTool').addEventListener('click', () => {
+  toolsService.setTool('polyline');
+});
 
-  document.getElementById('cancelBlockEdit').addEventListener('click', ()=>{
-    document.getElementById('blockEditorOverlay').style.display = 'none';
-    document.getElementById('blockEditorModal').style.display = 'none';
-    currentEditingBlockName = null;
-  });
+document.getElementById('createBlock').addEventListener('click', () => {
+  const name = prompt("Block name:", "Block1");
+  if (name) {
+    viewModel.createBlockFromSelection(name);
+  }
+});
 
-  document.getElementById('saveDXF').addEventListener('click', ()=>{
-    const dxfStr = exportDXF(drawing);
-    document.getElementById('dxfOutput').value = dxfStr;
-    const blob = new Blob([dxfStr], {type: 'text/plain'});
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'drawing.dxf';
-    link.click();
-    URL.revokeObjectURL(url);
-  });
+document.getElementById('insertBlock').addEventListener('click', () => {
+  const name = prompt("Block name to insert:", "Block1");
+  if (name && drawing.blocks[name]) {
+    viewModel.setBlockToInsert(name);
+    toolsService.setTool('insertBlock');
+  } else {
+    alert("Block not found!");
+  }
+});
 
-  document.getElementById('loadDXFFile').addEventListener('change', (evt)=>{
-    const file = evt.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = function(e) {
-      const contents = e.target.result;
-      importDXF(contents, drawing);
-    };
-    reader.readAsText(file);
-  });
-})();
+document.getElementById('saveDXF').addEventListener('click', () => {
+  const dxfStr = exportDXF(drawing);
+  document.getElementById('dxfOutput').value = dxfStr;
+  const blob = new Blob([dxfStr], {type: 'text/plain'});
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'drawing.dxf';
+  link.click();
+  URL.revokeObjectURL(url);
+});
+
+document.getElementById('loadDXFFile').addEventListener('change', (evt) => {
+  const file = evt.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = function(e) {
+    const contents = e.target.result;
+    importDXF(contents, drawing);
+  };
+  reader.readAsText(file);
+});
 </script>
 
 </body>
