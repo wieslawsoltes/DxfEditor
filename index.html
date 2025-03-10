@@ -393,6 +393,80 @@ function cloneEntity(entity) {
 
 /*
   ===============================
+  ========== Resize Service ==========
+  ===============================
+*/
+// New standalone service class for all resizing logic
+class ResizeService {
+  // Returns an array of handle objects for a given bounding box.
+  static getSelectionHandles(bounds) {
+    const midX = (bounds.minX + bounds.maxX) / 2;
+    const midY = (bounds.minY + bounds.maxY) / 2;
+    return [
+      { id: 'nw', x: bounds.minX, y: bounds.minY },
+      { id: 'n',  x: midX,       y: bounds.minY },
+      { id: 'ne', x: bounds.maxX, y: bounds.minY },
+      { id: 'e',  x: bounds.maxX, y: midY },
+      { id: 'se', x: bounds.maxX, y: bounds.maxY },
+      { id: 's',  x: midX,       y: bounds.maxY },
+      { id: 'sw', x: bounds.minX, y: bounds.maxY },
+      { id: 'w',  x: bounds.minX, y: midY }
+    ];
+  }
+
+  // Given the original bounds, a resize handle, and the new point (x, y),
+  // calculate the new bounding box.
+  static calculateNewBounds(origBounds, handle, x, y) {
+    let newBounds = Object.assign({}, origBounds);
+    switch (handle) {
+      case 'nw': newBounds.minX = x; newBounds.minY = y; break;
+      case 'n':  newBounds.minY = y; break;
+      case 'ne': newBounds.maxX = x; newBounds.minY = y; break;
+      case 'e':  newBounds.maxX = x; break;
+      case 'se': newBounds.maxX = x; newBounds.maxY = y; break;
+      case 's':  newBounds.maxY = y; break;
+      case 'sw': newBounds.minX = x; newBounds.maxY = y; break;
+      case 'w':  newBounds.minX = x; break;
+    }
+    return newBounds;
+  }
+
+  // Updates the current entity's geometry based on the original entity, the original bounding box,
+  // and the new bounding box (which defines the scale factors).
+  static updateEntityFromResize(original, current, origBounds, newBounds) {
+    const origWidth = origBounds.maxX - origBounds.minX;
+    const origHeight = origBounds.maxY - origBounds.minY;
+    const newWidth = newBounds.maxX - newBounds.minX;
+    const newHeight = newBounds.maxY - newBounds.minY;
+    const scaleX = origWidth !== 0 ? newWidth / origWidth : 1;
+    const scaleY = origHeight !== 0 ? newHeight / origHeight : 1;
+
+    if (original instanceof LineEntity) {
+      current.x1 = newBounds.minX + (original.x1 - origBounds.minX) * scaleX;
+      current.y1 = newBounds.minY + (original.y1 - origBounds.minY) * scaleY;
+      current.x2 = newBounds.minX + (original.x2 - origBounds.minX) * scaleX;
+      current.y2 = newBounds.minY + (original.y2 - origBounds.minY) * scaleY;
+    } else if (original instanceof PolylineEntity) {
+      current.vertices = original.vertices.map(v => ({
+        x: newBounds.minX + (v.x - origBounds.minX) * scaleX,
+        y: newBounds.minY + (v.y - origBounds.minY) * scaleY
+      }));
+    } else if (original instanceof CircleEntity) {
+      current.cx = newBounds.minX + (original.cx - origBounds.minX) * scaleX;
+      current.cy = newBounds.minY + (original.cy - origBounds.minY) * scaleY;
+      current.r = original.r * ((scaleX + scaleY) / 2);
+    } else if (original instanceof TextEntity) {
+      current.x = newBounds.minX + (original.x - origBounds.minX) * scaleX;
+      current.y = newBounds.minY + (original.y - origBounds.minY) * scaleY;
+    } else if (original instanceof InsertEntity) {
+      current.x = newBounds.minX + (original.x - origBounds.minX) * scaleX;
+      current.y = newBounds.minY + (original.y - origBounds.minY) * scaleY;
+    }
+  }
+}
+
+/*
+  ===============================
   ========== Drawing Service ==========
   ===============================
 */
@@ -459,54 +533,6 @@ class DrawingService {
         ctx.restore();
       }
     }
-  }
-}
-
-/*
-  ===============================
-  ========== Resize Helpers ==========
-  ===============================
-*/
-
-// Returns an array of handle objects (each with an id, x, and y)
-function getSelectionHandles(bounds) {
-  const midX = (bounds.minX + bounds.maxX) / 2;
-  const midY = (bounds.minY + bounds.maxY) / 2;
-  return [
-    { id: 'nw', x: bounds.minX, y: bounds.minY },
-    { id: 'n',  x: midX,       y: bounds.minY },
-    { id: 'ne', x: bounds.maxX, y: bounds.minY },
-    { id: 'e',  x: bounds.maxX, y: midY },
-    { id: 'se', x: bounds.maxX, y: bounds.maxY },
-    { id: 's',  x: midX,       y: bounds.maxY },
-    { id: 'sw', x: bounds.minX, y: bounds.maxY },
-    { id: 'w',  x: bounds.minX, y: midY }
-  ];
-}
-
-// Given the original (cloned) entity, its original bounding box and new bounding box,
-// compute scale factors and update the current entity’s geometry accordingly.
-function updateEntityFromResize(original, current, origBounds, newBounds, scaleX, scaleY) {
-  if (original instanceof LineEntity) {
-    current.x1 = newBounds.minX + (original.x1 - origBounds.minX) * scaleX;
-    current.y1 = newBounds.minY + (original.y1 - origBounds.minY) * scaleY;
-    current.x2 = newBounds.minX + (original.x2 - origBounds.minX) * scaleX;
-    current.y2 = newBounds.minY + (original.y2 - origBounds.minY) * scaleY;
-  } else if (original instanceof PolylineEntity) {
-    current.vertices = original.vertices.map(v => ({
-      x: newBounds.minX + (v.x - origBounds.minX) * scaleX,
-      y: newBounds.minY + (v.y - origBounds.minY) * scaleY
-    }));
-  } else if (original instanceof CircleEntity) {
-    current.cx = newBounds.minX + (original.cx - origBounds.minX) * scaleX;
-    current.cy = newBounds.minY + (original.cy - origBounds.minY) * scaleY;
-    current.r = original.r * ((scaleX + scaleY) / 2);
-  } else if (original instanceof TextEntity) {
-    current.x = newBounds.minX + (original.x - origBounds.minX) * scaleX;
-    current.y = newBounds.minY + (original.y - origBounds.minY) * scaleY;
-  } else if (original instanceof InsertEntity) {
-    current.x = newBounds.minX + (original.x - origBounds.minX) * scaleX;
-    current.y = newBounds.minY + (original.y - origBounds.minY) * scaleY;
   }
 }
 
@@ -876,7 +902,7 @@ class CanvasRenderer {
     for (let ent of this.drawing.entities) {
       if (ent.selected) {
         const bounds = BoundsService.getEntityBounds(ent);
-        const handles = getSelectionHandles(bounds);
+        const handles = ResizeService.getSelectionHandles(bounds);
         for (let h of handles) {
           if (tx >= h.x - handleSize/2 && tx <= h.x + handleSize/2 &&
               ty >= h.y - handleSize/2 && ty <= h.y + handleSize/2) {
@@ -915,34 +941,15 @@ class CanvasRenderer {
     const tx = (pos.x - this.panX) / this.scale;
     const ty = (pos.y - this.panY) / this.scale;
     
-    // If in resizing mode, update the entity geometry:
+    // If in resizing mode, delegate to ResizeService.
     if (this.viewModel.resizing) {
       const origBounds = this.viewModel.resizeOriginalBounds;
-      let newBounds = Object.assign({}, origBounds);
-      switch(this.viewModel.resizeHandle) {
-        case 'nw': newBounds.minX = tx; newBounds.minY = ty; break;
-        case 'n':  newBounds.minY = ty; break;
-        case 'ne': newBounds.maxX = tx; newBounds.minY = ty; break;
-        case 'e':  newBounds.maxX = tx; break;
-        case 'se': newBounds.maxX = tx; newBounds.maxY = ty; break;
-        case 's':  newBounds.maxY = ty; break;
-        case 'sw': newBounds.minX = tx; newBounds.maxY = ty; break;
-        case 'w':  newBounds.minX = tx; break;
-      }
-      const origWidth = origBounds.maxX - origBounds.minX;
-      const origHeight = origBounds.maxY - origBounds.minY;
-      const newWidth = newBounds.maxX - newBounds.minX;
-      const newHeight = newBounds.maxY - newBounds.minY;
-      const scaleX = origWidth !== 0 ? newWidth / origWidth : 1;
-      const scaleY = origHeight !== 0 ? newHeight / origHeight : 1;
-      
-      updateEntityFromResize(
+      const newBounds = ResizeService.calculateNewBounds(origBounds, this.viewModel.resizeHandle, tx, ty);
+      ResizeService.updateEntityFromResize(
         this.viewModel.resizeOriginalEntity,
         this.viewModel.resizingEntity,
         origBounds,
-        newBounds,
-        scaleX,
-        scaleY
+        newBounds
       );
       return;
     }
@@ -1070,7 +1077,7 @@ class CanvasRenderer {
     for (let ent of this.drawing.entities) {
       if (ent.selected) {
         const bounds = BoundsService.getEntityBounds(ent);
-        const handles = getSelectionHandles(bounds);
+        const handles = ResizeService.getSelectionHandles(bounds);
         this.ctx.save();
         this.ctx.strokeStyle = 'blue';
         this.ctx.setLineDash([4/this.scale, 4/this.scale]);
