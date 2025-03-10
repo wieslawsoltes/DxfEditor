@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Minimal OOP Drawing App (MVVM, DXF) with Pan/Zoom, Block & Entity Editing</title>
+  <title>Minimal OOP Drawing App (MVVM, DXF) with Pan/Zoom, Block & Entity Editing with Resizing</title>
   <style>
     body {
       font-family: sans-serif;
@@ -464,18 +464,71 @@ class DrawingService {
 
 /*
   ===============================
+  ========== Resize Helpers ==========
+  ===============================
+*/
+
+// Returns an array of handle objects (each with an id, x, and y)
+function getSelectionHandles(bounds) {
+  const midX = (bounds.minX + bounds.maxX) / 2;
+  const midY = (bounds.minY + bounds.maxY) / 2;
+  return [
+    { id: 'nw', x: bounds.minX, y: bounds.minY },
+    { id: 'n',  x: midX,       y: bounds.minY },
+    { id: 'ne', x: bounds.maxX, y: bounds.minY },
+    { id: 'e',  x: bounds.maxX, y: midY },
+    { id: 'se', x: bounds.maxX, y: bounds.maxY },
+    { id: 's',  x: midX,       y: bounds.maxY },
+    { id: 'sw', x: bounds.minX, y: bounds.maxY },
+    { id: 'w',  x: bounds.minX, y: midY }
+  ];
+}
+
+// Given the original (cloned) entity, its original bounding box and new bounding box,
+// compute scale factors and update the current entity’s geometry accordingly.
+function updateEntityFromResize(original, current, origBounds, newBounds, scaleX, scaleY) {
+  if (original instanceof LineEntity) {
+    current.x1 = newBounds.minX + (original.x1 - origBounds.minX) * scaleX;
+    current.y1 = newBounds.minY + (original.y1 - origBounds.minY) * scaleY;
+    current.x2 = newBounds.minX + (original.x2 - origBounds.minX) * scaleX;
+    current.y2 = newBounds.minY + (original.y2 - origBounds.minY) * scaleY;
+  } else if (original instanceof PolylineEntity) {
+    current.vertices = original.vertices.map(v => ({
+      x: newBounds.minX + (v.x - origBounds.minX) * scaleX,
+      y: newBounds.minY + (v.y - origBounds.minY) * scaleY
+    }));
+  } else if (original instanceof CircleEntity) {
+    current.cx = newBounds.minX + (original.cx - origBounds.minX) * scaleX;
+    current.cy = newBounds.minY + (original.cy - origBounds.minY) * scaleY;
+    current.r = original.r * ((scaleX + scaleY) / 2);
+  } else if (original instanceof TextEntity) {
+    current.x = newBounds.minX + (original.x - origBounds.minX) * scaleX;
+    current.y = newBounds.minY + (original.y - origBounds.minY) * scaleY;
+  } else if (original instanceof InsertEntity) {
+    current.x = newBounds.minX + (original.x - origBounds.minX) * scaleX;
+    current.y = newBounds.minY + (original.y - origBounds.minY) * scaleY;
+  }
+}
+
+/*
+  ===============================
   ========== ViewModel ==========
   ===============================
 */
 class DrawingViewModel {
   constructor(drawing) {
     this.drawing = drawing;
-    // properties previously used by tool logic:
     this.tempEntity = null;
     this.startX = 0;
     this.startY = 0;
     this.isDragging = false;
     this.blockToInsert = null;
+    // NEW properties for resizing:
+    this.resizing = false;
+    this.resizingEntity = null;
+    this.resizeHandle = null;
+    this.resizeOriginalEntity = null;
+    this.resizeOriginalBounds = null;
   }
 
   findHitEntity(x, y) {
@@ -803,22 +856,46 @@ class CanvasRenderer {
 
   getMousePos(evt) {
     const rect = this.canvas.getBoundingClientRect();
-    return {
-      x: evt.clientX - rect.left,
-      y: evt.clientY - rect.top
-    };
+    return { x: evt.clientX - rect.left, y: evt.clientY - rect.top };
   }
 
   getTouchPos(touch) {
     const rect = this.canvas.getBoundingClientRect();
-    return {
-      x: touch.clientX - rect.left,
-      y: touch.clientY - rect.top
-    };
+    return { x: touch.clientX - rect.left, y: touch.clientY - rect.top };
   }
 
   onMouseDown(evt) {
     const pos = this.getMousePos(evt);
+    const tx = (pos.x - this.panX) / this.scale;
+    const ty = (pos.y - this.panY) / this.scale;
+    
+    // FIRST: Check if a resize handle was clicked on any selected entity.
+    const HANDLE_SCREEN_SIZE = 8; // in pixels
+    const handleSize = HANDLE_SCREEN_SIZE / this.scale; // size in drawing coordinates
+    let handleClicked = false;
+    for (let ent of this.drawing.entities) {
+      if (ent.selected) {
+        const bounds = BoundsService.getEntityBounds(ent);
+        const handles = getSelectionHandles(bounds);
+        for (let h of handles) {
+          if (tx >= h.x - handleSize/2 && tx <= h.x + handleSize/2 &&
+              ty >= h.y - handleSize/2 && ty <= h.y + handleSize/2) {
+            // Begin resizing for this entity:
+            this.viewModel.resizing = true;
+            this.viewModel.resizingEntity = ent;
+            this.viewModel.resizeHandle = h.id;
+            // Clone the entity so we have its original state
+            this.viewModel.resizeOriginalEntity = cloneEntity(ent);
+            this.viewModel.resizeOriginalBounds = bounds;
+            handleClicked = true;
+            break;
+          }
+        }
+      }
+      if (handleClicked) break;
+    }
+    if (handleClicked) return; // skip normal tool handling if resizing
+
     if (this.toolsService.currentToolName === 'pan') {
       this.isPanning = true;
       this.panStartX = pos.x;
@@ -828,39 +905,86 @@ class CanvasRenderer {
     this.isMouseDown = true;
     this.lastX = pos.x;
     this.lastY = pos.y;
-    const tx = (pos.x - this.panX) / this.scale;
-    const ty = (pos.y - this.panY) / this.scale;
-    this.toolsService.mouseDown(tx, ty, evt);
+    const txTool = (pos.x - this.panX) / this.scale;
+    const tyTool = (pos.y - this.panY) / this.scale;
+    this.toolsService.mouseDown(txTool, tyTool, evt);
   }
 
   onMouseMove(evt) {
     const pos = this.getMousePos(evt);
+    const tx = (pos.x - this.panX) / this.scale;
+    const ty = (pos.y - this.panY) / this.scale;
+    
+    // If in resizing mode, update the entity geometry:
+    if (this.viewModel.resizing) {
+      const origBounds = this.viewModel.resizeOriginalBounds;
+      let newBounds = Object.assign({}, origBounds);
+      switch(this.viewModel.resizeHandle) {
+        case 'nw': newBounds.minX = tx; newBounds.minY = ty; break;
+        case 'n':  newBounds.minY = ty; break;
+        case 'ne': newBounds.maxX = tx; newBounds.minY = ty; break;
+        case 'e':  newBounds.maxX = tx; break;
+        case 'se': newBounds.maxX = tx; newBounds.maxY = ty; break;
+        case 's':  newBounds.maxY = ty; break;
+        case 'sw': newBounds.minX = tx; newBounds.maxY = ty; break;
+        case 'w':  newBounds.minX = tx; break;
+      }
+      const origWidth = origBounds.maxX - origBounds.minX;
+      const origHeight = origBounds.maxY - origBounds.minY;
+      const newWidth = newBounds.maxX - newBounds.minX;
+      const newHeight = newBounds.maxY - newBounds.minY;
+      const scaleX = origWidth !== 0 ? newWidth / origWidth : 1;
+      const scaleY = origHeight !== 0 ? newHeight / origHeight : 1;
+      
+      updateEntityFromResize(
+        this.viewModel.resizeOriginalEntity,
+        this.viewModel.resizingEntity,
+        origBounds,
+        newBounds,
+        scaleX,
+        scaleY
+      );
+      return;
+    }
+    
     if (this.toolsService.currentToolName === 'pan' && this.isPanning) {
-         let dx = pos.x - this.panStartX;
-         let dy = pos.y - this.panStartY;
-         this.panX += dx;
-         this.panY += dy;
-         this.panStartX = pos.x;
-         this.panStartY = pos.y;
-         return;
+      let dx = pos.x - this.panStartX;
+      let dy = pos.y - this.panStartY;
+      this.panX += dx;
+      this.panY += dy;
+      this.panStartX = pos.x;
+      this.panStartY = pos.y;
+      return;
     }
     if (this.isMouseDown) {
-         const tx = (pos.x - this.panX) / this.scale;
-         const ty = (pos.y - this.panY) / this.scale;
-         this.toolsService.mouseMove(tx, ty, evt);
+      const txTool = (pos.x - this.panX) / this.scale;
+      const tyTool = (pos.y - this.panY) / this.scale;
+      this.toolsService.mouseMove(txTool, tyTool, evt);
     }
   }
 
   onMouseUp(evt) {
     const pos = this.getMousePos(evt);
-    if (this.toolsService.currentToolName === 'pan') {
-         this.isPanning = false;
-         return;
-    }
-    this.isMouseDown = false;
     const tx = (pos.x - this.panX) / this.scale;
     const ty = (pos.y - this.panY) / this.scale;
-    this.toolsService.mouseUp(tx, ty, evt);
+    
+    if (this.viewModel.resizing) {
+      this.viewModel.resizing = false;
+      this.viewModel.resizingEntity = null;
+      this.viewModel.resizeHandle = null;
+      this.viewModel.resizeOriginalEntity = null;
+      this.viewModel.resizeOriginalBounds = null;
+      return;
+    }
+    
+    if (this.toolsService.currentToolName === 'pan') {
+      this.isPanning = false;
+      return;
+    }
+    this.isMouseDown = false;
+    const txTool = (pos.x - this.panX) / this.scale;
+    const tyTool = (pos.y - this.panY) / this.scale;
+    this.toolsService.mouseUp(txTool, tyTool, evt);
   }
 
   onWheel(evt) {
@@ -940,6 +1064,28 @@ class CanvasRenderer {
     for (let ent of this.drawing.entities) {
       DrawingService.drawEntity(ent, this.ctx, this.drawing.blocks);
     }
+    // Draw selection handles for selected entities:
+    const HANDLE_SCREEN_SIZE = 8;
+    const handleSize = HANDLE_SCREEN_SIZE / this.scale;
+    for (let ent of this.drawing.entities) {
+      if (ent.selected) {
+        const bounds = BoundsService.getEntityBounds(ent);
+        const handles = getSelectionHandles(bounds);
+        this.ctx.save();
+        this.ctx.strokeStyle = 'blue';
+        this.ctx.setLineDash([4/this.scale, 4/this.scale]);
+        this.ctx.strokeRect(bounds.minX, bounds.minY, bounds.maxX - bounds.minX, bounds.maxY - bounds.minY);
+        this.ctx.restore();
+        this.ctx.fillStyle = 'white';
+        this.ctx.strokeStyle = 'blue';
+        for (let h of handles) {
+          this.ctx.beginPath();
+          this.ctx.rect(h.x - handleSize/2, h.y - handleSize/2, handleSize, handleSize);
+          this.ctx.fill();
+          this.ctx.stroke();
+        }
+      }
+    }
     this.ctx.restore();
     requestAnimationFrame(() => this.renderLoop());
   }
@@ -947,10 +1093,9 @@ class CanvasRenderer {
 
 /*
   ===============================
-  ======== DXF I/O ==============
+  ========== DXF I/O ============
   ===============================
 */
-
 class DxfService {
   static exportDXF(drawing) {
     let dxf = [];
