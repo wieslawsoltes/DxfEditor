@@ -2,11 +2,26 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Minimal OOP Drawing App (MVVM, DXF) with Pan/Zoom, Block & Entity Editing with Resizing</title>
+  <title>Minimal OOP Drawing App (MVVM, DXF) with Pan/Zoom, Block & Entity Editing with Resizing + Property Grid</title>
   <style>
     body {
       font-family: sans-serif;
       margin: 16px;
+    }
+    #toolbar {
+      margin-bottom: 8px;
+    }
+    button {
+      margin-right: 4px;
+      font-size: 20px;
+    }
+    textarea {
+      width: 100%;
+      height: 120px;
+    }
+    /* Container holding the canvas and the property grid */
+    #mainContainer {
+      display: flex;
     }
     #canvasContainer {
       border: 1px solid #ccc;
@@ -20,16 +35,14 @@
       top: 0;
       left: 0;
     }
-    #toolbar {
-      margin-bottom: 8px;
-    }
-    button {
-      margin-right: 4px;
-      font-size: 20px;
-    }
-    textarea {
-      width: 100%;
-      height: 120px;
+    /* Property grid styles */
+    #propertyGrid {
+      width: 220px;
+      margin-left: 8px;
+      border: 1px solid #ccc;
+      padding: 8px;
+      height: 600px;
+      overflow-y: auto;
     }
     /* Modal styles for block and entity editor */
     #blockEditorOverlay, #entityEditorOverlay {
@@ -79,13 +92,19 @@
   <button id="createBlock" title="Create BLOCK from Selection">📦</button>
   <button id="insertBlock" title="INSERT Block">➕</button>
   <button id="editBlock" title="Edit Block">🛠️</button>
-  <button id="editEntity" title="Edit Entity">📝</button>
+  <button id="editEntity" title="Edit Entity (Modal)">📝</button>
   <button id="saveDXF" title="Save DXF">💾</button>
   <input type="file" id="loadDXFFile" accept=".dxf,text/plain" />
 </div>
 
-<div id="canvasContainer">
-  <canvas id="drawingCanvas" width="800" height="600"></canvas>
+<div id="mainContainer">
+  <div id="canvasContainer">
+    <canvas id="drawingCanvas" width="800" height="600"></canvas>
+  </div>
+  <div id="propertyGrid">
+    <h3>Properties</h3>
+    <div id="propertyGridContent">Select a single entity to edit its properties.</div>
+  </div>
 </div>
 
 <p>
@@ -1071,6 +1090,7 @@ class CanvasRenderer {
       this.viewModel.resizeHandle = null;
       this.viewModel.resizeOriginalEntity = null;
       this.viewModel.resizeOriginalBounds = null;
+      updatePropertyGrid();
       return;
     }
     
@@ -1082,6 +1102,7 @@ class CanvasRenderer {
     const txTool = (pos.x - this.panX) / this.scale;
     const tyTool = (pos.y - this.panY) / this.scale;
     this.toolsService.mouseUp(txTool, tyTool, evt);
+    updatePropertyGrid();
   }
 
   onWheel(evt) {
@@ -1148,6 +1169,7 @@ class CanvasRenderer {
       this.toolsService.mouseUp(tx, ty, evt);
     }
     this.isPanning = false;
+    updatePropertyGrid();
   }
 
   renderLoop() {
@@ -1602,6 +1624,7 @@ document.getElementById('saveEntityEdit').addEventListener('click', () => {
     document.getElementById('entityEditorOverlay').style.display = 'none';
     document.getElementById('entityEditorModal').style.display = 'none';
     currentEditingEntityIndex = null;
+    updatePropertyGrid();
   } catch (e) {
     alert("Error parsing JSON: " + e.message);
   }
@@ -1654,6 +1677,53 @@ document.getElementById('cancelBlockEdit').addEventListener('click', () => {
 
 /*
   ===============================
+  ========== Property Grid ======
+  ===============================
+*/
+// This function updates the property grid panel on the right.
+// If exactly one entity is selected, it shows its editable properties.
+function updatePropertyGrid() {
+  const propertyGridContent = document.getElementById('propertyGridContent');
+  const selectedEntities = drawing.entities.filter(e => e.selected);
+  if (selectedEntities.length !== 1) {
+    propertyGridContent.innerHTML = "Select a single entity to edit its properties.";
+    return;
+  }
+  const entity = selectedEntities[0];
+  const obj = entityToObject(entity);
+  let html = '<form id="propertyGridForm">';
+  for (let key in obj) {
+    if (key === "type") {
+      html += '<div><strong>' + obj[key] + '</strong></div>';
+    } else {
+      html += '<div style="margin-bottom: 4px;">';
+      html += '<label>' + key + ': </label>';
+      html += '<input type="text" name="' + key + '" value="' + obj[key] + '" style="width: 80%;" />';
+      html += '</div>';
+    }
+  }
+  html += '<button type="submit">Apply</button>';
+  html += '</form>';
+  propertyGridContent.innerHTML = html;
+  
+  const form = document.getElementById('propertyGridForm');
+  form.addEventListener('submit', function(e) {
+    e.preventDefault();
+    const formData = new FormData(form);
+    for (let [key, value] of formData.entries()) {
+      if (key in entity) {
+        if (typeof entity[key] === 'number') {
+          entity[key] = parseFloat(value);
+        } else {
+          entity[key] = value;
+        }
+      }
+    }
+  });
+}
+
+/*
+  ===============================
   ========== Main ===============
   ===============================
 */
@@ -1669,6 +1739,7 @@ document.getElementById('newDrawing').addEventListener('click', () => {
   renderer.panX = 0;
   renderer.panY = 0;
   renderer.scale = 1;
+  updatePropertyGrid();
 });
 
 document.getElementById('panTool').addEventListener('click', () => {
@@ -1735,6 +1806,7 @@ document.getElementById('loadDXFFile').addEventListener('change', (evt) => {
   reader.onload = function(e) {
     const contents = e.target.result;
     DxfService.importDXF(contents, drawing);
+    updatePropertyGrid();
   };
   reader.readAsText(file);
 });
