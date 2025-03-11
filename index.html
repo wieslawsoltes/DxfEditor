@@ -1680,8 +1680,70 @@ document.getElementById('cancelBlockEdit').addEventListener('click', () => {
   ========== Property Grid ======
   ===============================
 */
-// This function updates the property grid panel on the right.
-// If exactly one entity is selected, it shows its editable properties.
+// Helper: recursively render fields for an object or array.
+function renderPropertyFields(obj, parentKey = '') {
+  let html = '';
+  for (let key in obj) {
+    let fullKey = parentKey ? parentKey + '.' + key : key;
+    // For the "type" property, just show it.
+    if (key === 'type') {
+      html += '<div><strong>' + obj[key] + '</strong></div>';
+    } else if (typeof obj[key] === 'object' && obj[key] !== null) {
+      // If it's an array, iterate over its elements.
+      if (Array.isArray(obj[key])) {
+        html += `<fieldset style="padding:8px; margin:8px;"><legend>${key} (Array)</legend>`;
+        obj[key].forEach((item, index) => {
+          let itemKey = fullKey + '.' + index;
+          if (typeof item === 'object' && item !== null) {
+            html += renderPropertyFields(item, itemKey);
+          } else {
+            html += '<div style="margin-bottom: 4px;">' +
+                    '<label>' + index + ': </label>' +
+                    '<input type="text" name="' + itemKey + '" value="' + item + '" style="width: 80%;" />' +
+                    '</div>';
+          }
+        });
+        html += '</fieldset>';
+      } else {
+        // For a plain object, render a nested fieldset.
+        html += `<fieldset style="padding:8px; margin:8px;"><legend>${key}</legend>`;
+        html += renderPropertyFields(obj[key], fullKey);
+        html += '</fieldset>';
+      }
+    } else {
+      // For primitives, render a simple text input.
+      html += '<div style="margin-bottom: 4px;">' +
+              '<label>' + key + ': </label>' +
+              '<input type="text" name="' + fullKey + '" value="' + obj[key] + '" style="width: 80%;" />' +
+              '</div>';
+    }
+  }
+  return html;
+}
+
+// Helper: update a nested property in an object based on a dot-delimited path.
+function setValueByPath(obj, path, value, original) {
+  const keys = path.split('.');
+  const lastKey = keys.pop();
+  let target = obj;
+  let origTarget = original;
+  for (let k of keys) {
+    if (!(k in target)) {
+      target[k] = {};
+    }
+    target = target[k];
+    origTarget = origTarget ? origTarget[k] : undefined;
+  }
+  // Use original value type as a hint (for numbers, for example)
+  let origVal = origTarget ? origTarget[lastKey] : undefined;
+  if (typeof origVal === 'number') {
+    target[lastKey] = parseFloat(value);
+  } else {
+    target[lastKey] = value;
+  }
+}
+
+// New updatePropertyGrid() that uses recursive editing for sub-objects.
 function updatePropertyGrid() {
   const propertyGridContent = document.getElementById('propertyGridContent');
   const selectedEntities = drawing.entities.filter(e => e.selected);
@@ -1690,18 +1752,10 @@ function updatePropertyGrid() {
     return;
   }
   const entity = selectedEntities[0];
+  // Convert the entity into a plain object.
   const obj = entityToObject(entity);
   let html = '<form id="propertyGridForm">';
-  for (let key in obj) {
-    if (key === "type") {
-      html += '<div><strong>' + obj[key] + '</strong></div>';
-    } else {
-      html += '<div style="margin-bottom: 4px;">';
-      html += '<label>' + key + ': </label>';
-      html += '<input type="text" name="' + key + '" value="' + obj[key] + '" style="width: 80%;" />';
-      html += '</div>';
-    }
-  }
+  html += renderPropertyFields(obj);
   html += '<button type="submit">Apply</button>';
   html += '</form>';
   propertyGridContent.innerHTML = html;
@@ -1710,14 +1764,20 @@ function updatePropertyGrid() {
   form.addEventListener('submit', function(e) {
     e.preventDefault();
     const formData = new FormData(form);
+    // Use a copy of the original object to help detect types.
+    const originalObj = entityToObject(entity);
     for (let [key, value] of formData.entries()) {
-      if (key in entity) {
-        if (typeof entity[key] === 'number') {
-          entity[key] = parseFloat(value);
-        } else {
-          entity[key] = value;
-        }
-      }
+      // Do not modify the "type" property.
+      if (key === 'type') continue;
+      setValueByPath(obj, key, value, originalObj);
+    }
+    // Recreate the entity from the updated object.
+    const newEntity = objectToEntity(obj);
+    if (newEntity) {
+      newEntity.selected = true;
+      // Replace the old entity in the drawing.
+      const index = drawing.entities.indexOf(entity);
+      drawing.entities[index] = newEntity;
     }
   });
 }
