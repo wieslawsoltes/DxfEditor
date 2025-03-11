@@ -906,13 +906,13 @@ class RectTool extends BaseTool {
 
 class CircleTool extends BaseTool {
   mouseDown(x, y, evt) {
+    // Set the initial click as the circle's center.
     this.viewModel.tempEntity = new CircleEntity(x, y, 0);
     this.viewModel.drawing.entities.push(this.viewModel.tempEntity);
-    this.viewModel.startX = x;
-    this.viewModel.startY = y;
   }
   mouseMove(x, y, evt) {
     if (this.viewModel.tempEntity) {
+      // Compute the radius as the distance from the fixed center to the current mouse position.
       const dx = x - this.viewModel.tempEntity.cx;
       const dy = y - this.viewModel.tempEntity.cy;
       this.viewModel.tempEntity.r = Math.sqrt(dx * dx + dy * dy);
