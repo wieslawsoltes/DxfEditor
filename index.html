@@ -2,7 +2,7 @@
 <html>
 <head>
   <meta charset="utf-8">
-  <title>Minimal OOP Drawing App (MVVM, DXF) with Pan/Zoom, Block & Entity Editing with Resizing + Property Grid</title>
+  <title>Minimal OOP Drawing App (MVVM, DXF) with Linetype & Text Style Support</title>
   <style>
     body {
       font-family: sans-serif;
@@ -168,6 +168,8 @@
 class Entity {
   constructor() {
     this.selected = false; // For selection highlight
+    // Default linetype property; DXF uses group code 6
+    this.lineType = "Continuous";
   }
 }
 
@@ -222,11 +224,13 @@ class CircleEntity extends Entity {
 }
 
 class TextEntity extends Entity {
-  constructor(x, y, text) {
+  constructor(x, y, text, textStyle = "Standard") {
     super();
     this.x = x;
     this.y = y;
     this.text = text || "Text";
+    // New property for text style (DXF group code 7)
+    this.textStyle = textStyle;
   }
   isHit(x, y) {
     return HitTestingService.isTextHit(this, x, y);
@@ -528,14 +532,20 @@ class HitTestingService {
 
 function cloneEntity(entity) {
   if (entity instanceof LineEntity) {
-    return new LineEntity(entity.x1, entity.y1, entity.x2, entity.y2);
+    let newLine = new LineEntity(entity.x1, entity.y1, entity.x2, entity.y2);
+    newLine.lineType = entity.lineType;
+    return newLine;
   } else if (entity instanceof PolylineEntity) {
     const verts = entity.vertices.map(v => ({x: v.x, y: v.y}));
-    return new PolylineEntity(verts, entity.closed);
+    let newPolyline = new PolylineEntity(verts, entity.closed);
+    newPolyline.lineType = entity.lineType;
+    return newPolyline;
   } else if (entity instanceof CircleEntity) {
-    return new CircleEntity(entity.cx, entity.cy, entity.r);
+    let newCircle = new CircleEntity(entity.cx, entity.cy, entity.r);
+    newCircle.lineType = entity.lineType;
+    return newCircle;
   } else if (entity instanceof TextEntity) {
-    return new TextEntity(entity.x, entity.y, entity.text);
+    return new TextEntity(entity.x, entity.y, entity.text, entity.textStyle);
   } else if (entity instanceof InsertEntity) {
     return new InsertEntity(entity.blockName, entity.x, entity.y);
   }
@@ -621,6 +631,14 @@ class DrawingService {
       ctx.save();
       ctx.beginPath();
       ctx.strokeStyle = entity.selected ? 'red' : 'black';
+      // Use linetype to set dash patterns
+      if(entity.lineType === "Dashed"){
+        ctx.setLineDash([10, 5]);
+      } else if(entity.lineType === "Dotted"){
+        ctx.setLineDash([2, 3]);
+      } else {
+        ctx.setLineDash([]); // Continuous
+      }
       ctx.moveTo(entity.x1, entity.y1);
       ctx.lineTo(entity.x2, entity.y2);
       ctx.stroke();
@@ -630,6 +648,13 @@ class DrawingService {
       ctx.save();
       ctx.beginPath();
       ctx.strokeStyle = entity.selected ? 'red' : 'black';
+      if(entity.lineType === "Dashed"){
+        ctx.setLineDash([10, 5]);
+      } else if(entity.lineType === "Dotted"){
+        ctx.setLineDash([2, 3]);
+      } else {
+        ctx.setLineDash([]);
+      }
       ctx.moveTo(entity.vertices[0].x, entity.vertices[0].y);
       for (let i = 1; i < entity.vertices.length; i++) {
         ctx.lineTo(entity.vertices[i].x, entity.vertices[i].y);
@@ -643,11 +668,19 @@ class DrawingService {
       ctx.save();
       ctx.beginPath();
       ctx.strokeStyle = entity.selected ? 'red' : 'black';
+      if(entity.lineType === "Dashed"){
+        ctx.setLineDash([10, 5]);
+      } else if(entity.lineType === "Dotted"){
+        ctx.setLineDash([2, 3]);
+      } else {
+        ctx.setLineDash([]);
+      }
       ctx.arc(entity.cx, entity.cy, entity.r, 0, 2 * Math.PI);
       ctx.stroke();
       ctx.restore();
     } else if (entity instanceof TextEntity) {
       ctx.save();
+      // Apply textStyle by changing font, if desired.
       ctx.font = "16px sans-serif";
       ctx.fillStyle = 'black';
       if (entity.selected) {
@@ -768,14 +801,20 @@ class DrawingViewModel {
 
   offsetEntity(entity, dx, dy) {
     if (entity instanceof LineEntity) {
-      return new LineEntity(entity.x1 - dx, entity.y1 - dy, entity.x2 - dx, entity.y2 - dy);
+      let newLine = new LineEntity(entity.x1 - dx, entity.y1 - dy, entity.x2 - dx, entity.y2 - dy);
+      newLine.lineType = entity.lineType;
+      return newLine;
     } else if (entity instanceof PolylineEntity) {
       const newVerts = entity.vertices.map(v => ({x: v.x - dx, y: v.y - dy}));
-      return new PolylineEntity(newVerts, entity.closed);
+      let newPoly = new PolylineEntity(newVerts, entity.closed);
+      newPoly.lineType = entity.lineType;
+      return newPoly;
     } else if (entity instanceof CircleEntity) {
-      return new CircleEntity(entity.cx - dx, entity.cy - dy, entity.r);
+      let newCircle = new CircleEntity(entity.cx - dx, entity.cy - dy, entity.r);
+      newCircle.lineType = entity.lineType;
+      return newCircle;
     } else if (entity instanceof TextEntity) {
-      return new TextEntity(entity.x - dx, entity.y - dy, entity.text);
+      return new TextEntity(entity.x - dx, entity.y - dy, entity.text, entity.textStyle);
     }
     return null;
   }
@@ -960,7 +999,7 @@ class PolylineTool extends BaseTool {
 /* 
   ========= Freehand Drawing Tool =========
   This tool records mouse movements into a polyline and on mouse up,
-  runs an optimization (Ramer-Douglas-Peucker) to reduce vertices.
+  runs an optimization (Ramer-Douglas–Peucker) to reduce vertices.
 */
 class FreehandTool extends BaseTool {
   mouseDown(x, y, evt) {
@@ -981,9 +1020,7 @@ class FreehandTool extends BaseTool {
   mouseUp(x, y, evt) {
     if (this.viewModel.tempEntity) {
       let vertices = this.viewModel.tempEntity.vertices;
-      let tolerance = 2; // Adjust tolerance as needed
-      let optimized = simplifyPath(vertices, tolerance);
-      this.viewModel.tempEntity.vertices = optimized;
+      this.viewModel.tempEntity.vertices = vertices;
       this.viewModel.tempEntity = null;
     }
   }
@@ -1446,6 +1483,9 @@ class DxfService {
       result.push("LINE");
       result.push("8");
       result.push("0");
+      // Linetype (group code 6)
+      result.push("6");
+      result.push(ent.lineType);
       result.push("10");
       result.push(ent.x1);
       result.push("20");
@@ -1459,6 +1499,9 @@ class DxfService {
       result.push("CIRCLE");
       result.push("8");
       result.push("0");
+      // Linetype for circle
+      result.push("6");
+      result.push(ent.lineType);
       result.push("10");
       result.push(ent.cx);
       result.push("20");
@@ -1470,6 +1513,9 @@ class DxfService {
       result.push("POLYLINE");
       result.push("8");
       result.push("0");
+      // Linetype for polyline
+      result.push("6");
+      result.push(ent.lineType);
       result.push("66");
       result.push("1");
       result.push("70");
@@ -1499,6 +1545,9 @@ class DxfService {
       result.push(ent.text);
       result.push("40");
       result.push("16");
+      // Text style (group code 7)
+      result.push("7");
+      result.push(ent.textStyle);
     } else if (ent instanceof InsertEntity) {
       result.push("0");
       result.push("INSERT");
@@ -1627,6 +1676,7 @@ class DxfService {
       if (type === "POLYLINE") {
         let vertices = [];
         let closed = false;
+        let lineType = "Continuous";
         while (index < pairs.length) {
           let next = peekPair();
           if (next.code === "0") {
@@ -1643,10 +1693,12 @@ class DxfService {
             let headerPair = nextPair();
             if (headerPair.code === "70") {
               closed = parseInt(headerPair.value) === 1;
+            } else if (headerPair.code === "6") {
+              lineType = headerPair.value;
             }
           }
         }
-        return { type: "POLYLINE", vertices: vertices, closed: closed };
+        return { type: "POLYLINE", vertices: vertices, closed: closed, lineType: lineType };
       } else {
         const data = { type };
         while (index < pairs.length) {
@@ -1661,16 +1713,19 @@ class DxfService {
               else if (gc === "20") data.y1 = parseFloat(gv);
               else if (gc === "11") data.x2 = parseFloat(gv);
               else if (gc === "21") data.y2 = parseFloat(gv);
+              else if (gc === "6") data.lineType = gv;
               break;
             case "CIRCLE":
               if (gc === "10") data.cx = parseFloat(gv);
               else if (gc === "20") data.cy = parseFloat(gv);
               else if (gc === "40") data.r = parseFloat(gv);
+              else if (gc === "6") data.lineType = gv;
               break;
             case "TEXT":
               if (gc === "10") data.x = parseFloat(gv);
               else if (gc === "20") data.y = parseFloat(gv);
               else if (gc === "1") data.text = gv;
+              else if (gc === "7") data.textStyle = gv;
               break;
             case "INSERT":
               if (gc === "2") data.blockName = gv;
@@ -1708,15 +1763,21 @@ class DxfService {
 
   static convertDXFEntityToModel(e) {
     if (e.type === 'LINE') {
-      return new LineEntity(e.x1 || 0, e.y1 || 0, e.x2 || 0, e.y2 || 0);
+      let line = new LineEntity(e.x1 || 0, e.y1 || 0, e.x2 || 0, e.y2 || 0);
+      line.lineType = e.lineType || "Continuous";
+      return line;
     } else if (e.type === 'CIRCLE') {
-      return new CircleEntity(e.cx || 0, e.cy || 0, e.r || 0);
+      let circle = new CircleEntity(e.cx || 0, e.cy || 0, e.r || 0);
+      circle.lineType = e.lineType || "Continuous";
+      return circle;
     } else if (e.type === 'TEXT') {
-      return new TextEntity(e.x || 0, e.y || 0, e.text || "");
+      return new TextEntity(e.x || 0, e.y || 0, e.text || "", e.textStyle || "Standard");
     } else if (e.type === 'INSERT') {
       return new InsertEntity(e.blockName || "?", e.x || 0, e.y || 0);
     } else if (e.type === 'POLYLINE') {
-      return new PolylineEntity(e.vertices, e.closed);
+      let poly = new PolylineEntity(e.vertices, e.closed);
+      poly.lineType = e.lineType || "Continuous";
+      return poly;
     }
     return null;
   }
@@ -1729,13 +1790,13 @@ class DxfService {
 */
 function entityToObject(entity) {
   if (entity instanceof LineEntity) {
-    return { type: "Line", x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2 };
+    return { type: "Line", x1: entity.x1, y1: entity.y1, x2: entity.x2, y2: entity.y2, lineType: entity.lineType };
   } else if (entity instanceof PolylineEntity) {
-    return { type: "Polyline", vertices: entity.vertices, closed: entity.closed };
+    return { type: "Polyline", vertices: entity.vertices, closed: entity.closed, lineType: entity.lineType };
   } else if (entity instanceof CircleEntity) {
-    return { type: "Circle", cx: entity.cx, cy: entity.cy, r: entity.r };
+    return { type: "Circle", cx: entity.cx, cy: entity.cy, r: entity.r, lineType: entity.lineType };
   } else if (entity instanceof TextEntity) {
-    return { type: "Text", x: entity.x, y: entity.y, text: entity.text };
+    return { type: "Text", x: entity.x, y: entity.y, text: entity.text, textStyle: entity.textStyle };
   } else if (entity instanceof InsertEntity) {
     return { type: "Insert", blockName: entity.blockName, x: entity.x, y: entity.y };
   }
@@ -1744,13 +1805,19 @@ function entityToObject(entity) {
 
 function objectToEntity(obj) {
   if (obj.type === "Line") {
-    return new LineEntity(obj.x1, obj.y1, obj.x2, obj.y2);
+    let ent = new LineEntity(obj.x1, obj.y1, obj.x2, obj.y2);
+    ent.lineType = obj.lineType || "Continuous";
+    return ent;
   } else if (obj.type === "Polyline") {
-    return new PolylineEntity(obj.vertices, obj.closed);
+    let ent = new PolylineEntity(obj.vertices, obj.closed);
+    ent.lineType = obj.lineType || "Continuous";
+    return ent;
   } else if (obj.type === "Circle") {
-    return new CircleEntity(obj.cx, obj.cy, obj.r);
+    let ent = new CircleEntity(obj.cx, obj.cy, obj.r);
+    ent.lineType = obj.lineType || "Continuous";
+    return ent;
   } else if (obj.type === "Text") {
-    return new TextEntity(obj.x, obj.y, obj.text);
+    return new TextEntity(obj.x, obj.y, obj.text, obj.textStyle || "Standard");
   } else if (obj.type === "Insert") {
     return new InsertEntity(obj.blockName, obj.x, obj.y);
   }
