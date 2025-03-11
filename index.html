@@ -680,7 +680,6 @@ class DrawingViewModel {
   }
 
   findHitEntity(x, y) {
-    // Build a quadtree from current entities using improved bounds.
     const drawingEntities = this.drawing.entities;
     let globalBounds = {minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity};
     drawingEntities.forEach(ent => {
@@ -699,8 +698,11 @@ class DrawingViewModel {
       const b = BoundsService.getEntityBounds(ent, this.drawing.blocks);
       qt.insert({ entity: ent, bounds: b });
     });
+
     // Query candidates at the click point.
     const candidates = qt.queryPoint(x, y);
+    let hitEntities = [];
+
     // Check candidates in reverse drawing order.
     for (let i = drawingEntities.length - 1; i >= 0; i--) {
       let ent = drawingEntities[i];
@@ -711,10 +713,20 @@ class DrawingViewModel {
         } else {
           hit = ent.isHit(x, y);
         }
-        if (hit) return ent;
+        if (hit) hitEntities.push(ent);
       }
     }
-    return null;
+
+    if (hitEntities.length === 0) return null;
+
+    // If the top entity is already selected, cycle to the next.
+    const selectedIndex = hitEntities.findIndex(e => e.selected);
+    if (selectedIndex === -1) {
+      return hitEntities[0];
+    } else {
+      // Returns the next entity in the list (wraps around)
+      return hitEntities[(selectedIndex + 1) % hitEntities.length];
+    }
   }
 
   clearSelection() {
