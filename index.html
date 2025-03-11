@@ -415,19 +415,44 @@ class HitTestingService {
     return this.pointLineDistance(x, y, entity.x1, entity.y1, entity.x2, entity.y2) < 5;
   }
 
+  static isPointInPolygon(x, y, vertices) {
+    let inside = false;
+    for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+      const xi = vertices[i].x, yi = vertices[i].y;
+      const xj = vertices[j].x, yj = vertices[j].y;
+      const intersect = ((yi > y) !== (yj > y)) &&
+                        (x < (xj - xi) * (y - yi) / (yj - yi) + xi);
+      if (intersect) inside = !inside;
+    }
+    return inside;
+  }
+
   static isPolylineHit(entity, x, y) {
-    for (let i = 0; i < entity.vertices.length - 1; i++) {
-      const v1 = entity.vertices[i];
-      const v2 = entity.vertices[i + 1];
-      if (this.pointLineDistance(x, y, v1.x, v1.y, v2.x, v2.y) < 5) {
+    const threshold = 5;
+    if (entity.vertices.length < 2) return false;
+    
+    if (entity.closed) {
+      // Check all edges (using modulo for wrapping around)
+      for (let i = 0; i < entity.vertices.length; i++) {
+        let j = (i + 1) % entity.vertices.length;
+        if (this.pointLineDistance(x, y,
+                                   entity.vertices[i].x, entity.vertices[i].y,
+                                   entity.vertices[j].x, entity.vertices[j].y) < threshold) {
+          return true;
+        }
+      }
+      // If not near any edge, check if the point is inside the polygon.
+      if (this.isPointInPolygon(x, y, entity.vertices)) {
         return true;
       }
-    }
-    if (entity.closed && entity.vertices.length > 1) {
-      const v1 = entity.vertices[entity.vertices.length - 1];
-      const v2 = entity.vertices[0];
-      if (this.pointLineDistance(x, y, v1.x, v1.y, v2.x, v2.y) < 5) {
-        return true;
+    } else {
+      // Open polyline: check each segment
+      for (let i = 0; i < entity.vertices.length - 1; i++) {
+        if (this.pointLineDistance(x, y,
+                                   entity.vertices[i].x, entity.vertices[i].y,
+                                   entity.vertices[i+1].x, entity.vertices[i+1].y) < threshold) {
+          return true;
+        }
       }
     }
     return false;
