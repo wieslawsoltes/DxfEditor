@@ -110,6 +110,7 @@
   <button id="circleTool" title="Circle">⚪</button>
   <button id="textTool" title="Text">✏️</button>
   <button id="polylineTool" title="Polyline">〰️</button>
+  <button id="freehandTool" title="Freehand">🖌️</button>
   <button id="createBlock" title="Create BLOCK from Selection">📦</button>
   <!-- You may keep or remove the old INSERT button -->
   <button id="insertBlock" title="INSERT Block">➕</button>
@@ -457,7 +458,6 @@ class HitTestingService {
     if (entity.vertices.length < 2) return false;
     
     if (entity.closed) {
-      // Check all edges (using modulo for wrapping around)
       for (let i = 0; i < entity.vertices.length; i++) {
         let j = (i + 1) % entity.vertices.length;
         if (this.pointLineDistance(x, y,
@@ -466,12 +466,10 @@ class HitTestingService {
           return true;
         }
       }
-      // If not near any edge, check if the point is inside the polygon.
       if (this.isPointInPolygon(x, y, entity.vertices)) {
         return true;
       }
     } else {
-      // Open polyline: check each segment
       for (let i = 0; i < entity.vertices.length - 1; i++) {
         if (this.pointLineDistance(x, y,
                                    entity.vertices[i].x, entity.vertices[i].y,
@@ -752,7 +750,6 @@ class DrawingViewModel {
     if (selectedIndex === -1) {
       return hitEntities[0];
     } else {
-      // Returns the next entity in the list (wraps around)
       return hitEntities[(selectedIndex + 1) % hitEntities.length];
     }
   }
@@ -906,13 +903,11 @@ class RectTool extends BaseTool {
 
 class CircleTool extends BaseTool {
   mouseDown(x, y, evt) {
-    // Set the initial click as the circle's center.
     this.viewModel.tempEntity = new CircleEntity(x, y, 0);
     this.viewModel.drawing.entities.push(this.viewModel.tempEntity);
   }
   mouseMove(x, y, evt) {
     if (this.viewModel.tempEntity) {
-      // Compute the radius as the distance from the fixed center to the current mouse position.
       const dx = x - this.viewModel.tempEntity.cx;
       const dy = y - this.viewModel.tempEntity.cy;
       this.viewModel.tempEntity.r = Math.sqrt(dx * dx + dy * dy);
@@ -962,6 +957,81 @@ class PolylineTool extends BaseTool {
   }
 }
 
+/* 
+  ========= Freehand Drawing Tool =========
+  This tool records mouse movements into a polyline and on mouse up,
+  runs an optimization (Ramer-Douglas-Peucker) to reduce vertices.
+*/
+class FreehandTool extends BaseTool {
+  mouseDown(x, y, evt) {
+    this.viewModel.tempEntity = new PolylineEntity([{x: x, y: y}], false);
+    this.viewModel.drawing.entities.push(this.viewModel.tempEntity);
+  }
+  mouseMove(x, y, evt) {
+    if (this.viewModel.tempEntity) {
+      let vertices = this.viewModel.tempEntity.vertices;
+      let lastVertex = vertices[vertices.length - 1];
+      let dx = x - lastVertex.x;
+      let dy = y - lastVertex.y;
+      if (Math.sqrt(dx*dx+dy*dy) >= 1) {
+         vertices.push({x: x, y: y});
+      }
+    }
+  }
+  mouseUp(x, y, evt) {
+    if (this.viewModel.tempEntity) {
+      let vertices = this.viewModel.tempEntity.vertices;
+      let tolerance = 2; // Adjust tolerance as needed
+      let optimized = simplifyPath(vertices, tolerance);
+      this.viewModel.tempEntity.vertices = optimized;
+      this.viewModel.tempEntity = null;
+    }
+  }
+}
+
+/*
+  ======= Simplification Helper Functions =======
+  Ramer–Douglas–Peucker algorithm to simplify a polyline.
+*/
+function simplifyPath(points, tolerance) {
+  if (points.length < 3) return points;
+  let dmax = 0;
+  let index = 0;
+  let start = points[0];
+  let end = points[points.length - 1];
+  for (let i = 1; i < points.length - 1; i++) {
+    let d = perpendicularDistance(points[i], start, end);
+    if (d > dmax) {
+      dmax = d;
+      index = i;
+    }
+  }
+  if (dmax > tolerance) {
+    let recResults1 = simplifyPath(points.slice(0, index + 1), tolerance);
+    let recResults2 = simplifyPath(points.slice(index), tolerance);
+    return recResults1.slice(0, -1).concat(recResults2);
+  } else {
+    return [start, end];
+  }
+}
+
+function perpendicularDistance(point, lineStart, lineEnd) {
+  let dx = lineEnd.x - lineStart.x;
+  let dy = lineEnd.y - lineStart.y;
+  if (dx === 0 && dy === 0) {
+    return Math.sqrt((point.x - lineStart.x)**2 + (point.y - lineStart.y)**2);
+  }
+  let t = ((point.x - lineStart.x) * dx + (point.y - lineStart.y) * dy) / (dx*dx + dy*dy);
+  let projX = lineStart.x + t * dx;
+  let projY = lineStart.y + t * dy;
+  return Math.sqrt((point.x - projX)**2 + (point.y - projY)**2);
+}
+
+/*
+  ===============================
+  ========== Insert Block Tool =========
+  ===============================
+*/
 class InsertBlockTool extends BaseTool {
   mouseDown(x, y, evt) {
     if (this.viewModel.blockToInsert) {
@@ -971,6 +1041,11 @@ class InsertBlockTool extends BaseTool {
   }
 }
 
+/*
+  ===============================
+  ========== Tools Service =========
+  ===============================
+*/
 class ToolsService {
   constructor(viewModel) {
     this.viewModel = viewModel;
@@ -981,6 +1056,7 @@ class ToolsService {
       circle: new CircleTool(viewModel),
       text: new TextTool(viewModel),
       polyline: new PolylineTool(viewModel),
+      freehand: new FreehandTool(viewModel),
       insertBlock: new InsertBlockTool(viewModel)
     };
     this.currentToolName = 'select';
@@ -1094,7 +1170,7 @@ class CanvasRenderer {
     
     // FIRST: Check if a resize handle was clicked on any selected entity.
     const HANDLE_SCREEN_SIZE = 8; // in pixels
-    const handleSize = HANDLE_SCREEN_SIZE / this.scale; // in drawing coordinates
+    const handleSize = HANDLE_SCREEN_SIZE / this.scale;
     let handleClicked = false;
     for (let ent of this.drawing.entities) {
       if (ent.selected) {
@@ -1103,7 +1179,6 @@ class CanvasRenderer {
         for (let h of handles) {
           if (tx >= h.x - handleSize/2 && tx <= h.x + handleSize/2 &&
               ty >= h.y - handleSize/2 && ty <= h.y + handleSize/2) {
-            // Begin resizing for this entity:
             this.viewModel.resizing = true;
             this.viewModel.resizingEntity = ent;
             this.viewModel.resizeHandle = h.id;
@@ -1269,7 +1344,6 @@ class CanvasRenderer {
     for (let ent of this.drawing.entities) {
       DrawingService.drawEntity(ent, this.ctx, this.drawing.blocks);
     }
-    // Draw selection handles for selected entities:
     const HANDLE_SCREEN_SIZE = 8;
     const handleSize = HANDLE_SCREEN_SIZE / this.scale;
     for (let ent of this.drawing.entities) {
@@ -1291,7 +1365,6 @@ class CanvasRenderer {
         }
       }
     }
-    // NEW: If a block is being dragged, draw a ghost preview
     if (this.viewModel.dragBlock && this.drawing.blocks[this.viewModel.dragBlock]) {
       const block = this.drawing.blocks[this.viewModel.dragBlock];
       this.ctx.save();
@@ -1778,16 +1851,13 @@ document.getElementById('cancelBlockEdit').addEventListener('click', () => {
   ========== Property Grid ======
   ===============================
 */
-// Helper: recursively render fields for an object or array.
 function renderPropertyFields(obj, parentKey = '') {
   let html = '';
   for (let key in obj) {
     let fullKey = parentKey ? parentKey + '.' + key : key;
-    // For the "type" property, just show it.
     if (key === 'type') {
       html += '<div><strong>' + obj[key] + '</strong></div>';
     } else if (typeof obj[key] === 'object' && obj[key] !== null) {
-      // If it's an array, iterate over its elements.
       if (Array.isArray(obj[key])) {
         html += `<fieldset style="padding:8px; margin:8px;"><legend>${key} (Array)</legend>`;
         obj[key].forEach((item, index) => {
@@ -1803,13 +1873,11 @@ function renderPropertyFields(obj, parentKey = '') {
         });
         html += '</fieldset>';
       } else {
-        // For a plain object, render a nested fieldset.
         html += `<fieldset style="padding:8px; margin:8px;"><legend>${key}</legend>`;
         html += renderPropertyFields(obj[key], fullKey);
         html += '</fieldset>';
       }
     } else {
-      // For primitives, render a simple text input.
       html += '<div style="margin-bottom: 4px;">' +
               '<label>' + key + ': </label>' +
               '<input type="text" name="' + fullKey + '" value="' + obj[key] + '" style="width: 80%;" />' +
@@ -1819,7 +1887,6 @@ function renderPropertyFields(obj, parentKey = '') {
   return html;
 }
 
-// Helper: update a nested property in an object based on a dot-delimited path.
 function setValueByPath(obj, path, value, original) {
   const keys = path.split('.');
   const lastKey = keys.pop();
@@ -1832,7 +1899,6 @@ function setValueByPath(obj, path, value, original) {
     target = target[k];
     origTarget = origTarget ? origTarget[k] : undefined;
   }
-  // Use original value type as a hint (for numbers, for example)
   let origVal = origTarget ? origTarget[lastKey] : undefined;
   if (typeof origVal === 'number') {
     target[lastKey] = parseFloat(value);
@@ -1841,7 +1907,6 @@ function setValueByPath(obj, path, value, original) {
   }
 }
 
-// New updatePropertyGrid() that uses recursive editing for sub-objects.
 function updatePropertyGrid() {
   const propertyGridContent = document.getElementById('propertyGridContent');
   const selectedEntities = drawing.entities.filter(e => e.selected);
@@ -1850,7 +1915,6 @@ function updatePropertyGrid() {
     return;
   }
   const entity = selectedEntities[0];
-  // Convert the entity into a plain object.
   const obj = entityToObject(entity);
   let html = '<form id="propertyGridForm">';
   html += renderPropertyFields(obj);
@@ -1862,18 +1926,14 @@ function updatePropertyGrid() {
   form.addEventListener('submit', function(e) {
     e.preventDefault();
     const formData = new FormData(form);
-    // Use a copy of the original object to help detect types.
     const originalObj = entityToObject(entity);
     for (let [key, value] of formData.entries()) {
-      // Do not modify the "type" property.
       if (key === 'type') continue;
       setValueByPath(obj, key, value, originalObj);
     }
-    // Recreate the entity from the updated object.
     const newEntity = objectToEntity(obj);
     if (newEntity) {
       newEntity.selected = true;
-      // Replace the old entity in the drawing.
       const index = drawing.entities.indexOf(entity);
       drawing.entities[index] = newEntity;
     }
@@ -1894,13 +1954,11 @@ function updateBlockToolbox() {
     item.className = 'blockItem';
     item.draggable = true;
     item.dataset.blockName = blockName;
-    // Create preview canvas
     const previewCanvas = document.createElement('canvas');
     const previewSize = 80;
     previewCanvas.width = previewSize;
     previewCanvas.height = previewSize;
     const ctx = previewCanvas.getContext('2d');
-    // Compute block bounding box for scaling
     let bbox = {minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity};
     block.entities.forEach(e => {
       let b = BoundsService.getEntityBounds(e, drawing.blocks);
@@ -1932,7 +1990,6 @@ function updateBlockToolbox() {
     item.appendChild(previewCanvas);
     item.appendChild(label);
     
-    // Drag event listeners
     item.addEventListener('dragstart', (evt) => {
       evt.dataTransfer.setData("text/plain", blockName);
       evt.dataTransfer.setDragImage(previewCanvas, previewCanvas.width/2, previewCanvas.height/2);
@@ -1993,6 +2050,10 @@ document.getElementById('textTool').addEventListener('click', () => {
 
 document.getElementById('polylineTool').addEventListener('click', () => {
   toolsService.setTool('polyline');
+});
+
+document.getElementById('freehandTool').addEventListener('click', () => {
+  toolsService.setTool('freehand');
 });
 
 document.getElementById('createBlock').addEventListener('click', () => {
